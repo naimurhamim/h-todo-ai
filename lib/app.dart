@@ -74,6 +74,7 @@ class HTodoApp extends StatelessWidget {
           lazy: false,
           create: (ctx) => CloudSyncProvider(
             service: backupService,
+            storage: storage,
             aiSettings: ctx.read<AiSettingsProvider>(),
             tasks: ctx.read<TaskProvider>(),
             chat: ctx.read<ChatProvider>(),

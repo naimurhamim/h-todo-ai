@@ -4,11 +4,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/ai_provider_config.dart';
 import '../models/chat_message.dart';
+import '../models/google_account_profile.dart';
 import '../models/reminder_settings.dart';
 import '../models/security_settings.dart';
 import '../models/task_item.dart';
 
-/// Persists tasks, chat history, AI provider configs, and reminder/security settings.
+/// Persists tasks, chat history, AI provider configs, Google profile, and settings.
 class StorageService {
   StorageService({SharedPreferences? prefs}) : _prefs = prefs;
 
@@ -18,6 +19,7 @@ class StorageService {
   static const _activeProviderKey = 'htodo_active_provider_v1';
   static const _reminderSettingsKey = 'htodo_reminder_settings_v1';
   static const _securitySettingsKey = 'htodo_security_v1';
+  static const _googleProfileKey = 'htodo_google_profile_v1';
 
   SharedPreferences? _prefs;
 
@@ -143,5 +145,29 @@ class StorageService {
   Future<void> saveSecuritySettings(SecuritySettings settings) async {
     final prefs = await _instance();
     await prefs.setString(_securitySettingsKey, jsonEncode(settings.toJson()));
+  }
+
+  Future<GoogleAccountProfile?> loadGoogleProfile() async {
+    final prefs = await _instance();
+    final raw = prefs.getString(_googleProfileKey);
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) return null;
+      final profile = GoogleAccountProfile.fromJson(decoded);
+      if (profile.email.trim().isEmpty) return null;
+      return profile;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> saveGoogleProfile(GoogleAccountProfile? profile) async {
+    final prefs = await _instance();
+    if (profile == null) {
+      await prefs.remove(_googleProfileKey);
+    } else {
+      await prefs.setString(_googleProfileKey, jsonEncode(profile.toJson()));
+    }
   }
 }

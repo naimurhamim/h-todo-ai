@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 
 import 'ai_provider_config.dart';
@@ -8,6 +11,8 @@ import 'task_item.dart';
 /// Complete, self-contained cloud snapshot synced to `users/{uid}/backup/state`.
 @immutable
 class CloudBackupPayload {
+  static const String backupAppId = 'h_todo_ai';
+
   const CloudBackupPayload({
     this.schemaVersion = 1,
     required this.updatedAt,
@@ -182,5 +187,101 @@ class CloudBackupPayload {
       tasks: dedupedBySignature.values.toList(),
       chatMessages: mergedMessages,
     );
+  }
+
+  /// Serializes backup JSON for Google Drive `appDataFolder` or local `.json` export.
+  Map<String, dynamic> toBackupJson({bool includeApiKeys = true}) {
+    final serializedProviders = <String, dynamic>{};
+    for (final entry in providers.entries) {
+      final json = Map<String, dynamic>.from(entry.value.toJson());
+      if (!includeApiKeys) {
+        json['apiKey'] = '';
+      }
+      serializedProviders[entry.key.name] = json;
+    }
+    return {
+      'app': backupAppId,
+      'schemaVersion': schemaVersion,
+      'includesApiKeys': includeApiKeys,
+      'updatedAt': updatedAt.toIso8601String(),
+      'activeProviderType': activeProviderType.name,
+      'providers': serializedProviders,
+      'reminderSettings': reminderSettings.toJson(),
+      'tasks': tasks.map((t) => t.toJson()).toList(),
+      'chatMessages': chatMessages.map((m) => m.toJson()).toList(),
+    };
+  }
+
+  /// Validates and parses an H-TODO AI backup map from Drive or imported `.json`.
+  factory CloudBackupPayload.fromBackupJson(Map<String, dynamic> map) {
+    final appTag = map['app']?.toString();
+    if (appTag != null && appTag.isNotEmpty && appTag != backupAppId) {
+      throw const FormatException('This file is not an H-TODO AI backup.');
+    }
+    final hasAnySection = map.containsKey('tasks') ||
+        map.containsKey('providers') ||
+        map.containsKey('chatMessages') ||
+        map.containsKey('reminderSettings');
+    if (!hasAnySection) {
+      throw const FormatException(
+        'Backup file does not contain valid H-TODO AI data.',
+      );
+    }
+    return CloudBackupPayload.fromFirestoreMap(map);
+  }
+
+  String toJsonString({bool includeApiKeys = true, bool pretty = false}) {
+    final map = toBackupJson(includeApiKeys: includeApiKeys);
+    if (pretty) {
+      return const JsonEncoder.withIndent('  ').convert(map);
+    }
+    return jsonEncode(map);
+  }
+
+  factory CloudBackupPayload.fromJsonString(String raw) {
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) {
+      throw const FormatException('Invalid H-TODO AI backup file.');
+    }
+    return CloudBackupPayload.fromBackupJson(
+      Map<String, dynamic>.from(decoded),
+    );
+  }
+
+  static ({CloudBackupPayload payload, bool includesApiKeys})
+      parseBackupEnvelope(String raw) {
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) {
+      throw const FormatException('Invalid H-TODO AI backup file.');
+    }
+    final map = Map<String, dynamic>.from(decoded);
+    final payload = CloudBackupPayload.fromBackupJson(map);
+    final hasAnyImportedKey = payload.providers.values.any((p) => p.hasKey);
+    final explicitFlag = map['includesApiKeys'];
+    final includesKeys =
+        explicitFlag is bool ? (explicitFlag || hasAnyImportedKey) : hasAnyImportedKey;
+    return (payload: payload, includesApiKeys: includesKeys);
+  }
+
+  /// Deterministic content hash excluding [updatedAt] to skip identical auto-backups.
+  String computeContentFingerprint() {
+    final sortedProviders = {
+      for (final type in AiProviderType.values)
+        type.name: (providers[type] ?? AiProviderConfig.defaults()[type]!).toJson(),
+    };
+    final sortedTasks = tasks.map((t) => t.toJson()).toList()
+      ..sort((a, b) => (a['id']?.toString() ?? '').compareTo(b['id']?.toString() ?? ''));
+    final sortedChats = chatMessages.map((m) => m.toJson()).toList()
+      ..sort((a, b) => (a['id']?.toString() ?? '').compareTo(b['id']?.toString() ?? ''));
+
+    final canonical = {
+      'schemaVersion': schemaVersion,
+      'activeProviderType': activeProviderType.name,
+      'providers': sortedProviders,
+      'reminderSettings': reminderSettings.toJson(),
+      'tasks': sortedTasks,
+      'chatMessages': sortedChats,
+    };
+    return sha256.convert(utf8.encode(jsonEncode(canonical))).toString();
   }
 }

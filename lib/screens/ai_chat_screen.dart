@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -39,12 +41,33 @@ class _AiChatScreenState extends State<AiChatScreen> {
 
   final TextEditingController _inputCtrl = TextEditingController();
   final ScrollController _scrollCtrl = ScrollController();
+  List<TaskItem> _pendingUndoTasks = const [];
+  Timer? _undoBannerTimer;
 
   @override
   void dispose() {
+    _undoBannerTimer?.cancel();
     _inputCtrl.dispose();
     _scrollCtrl.dispose();
     super.dispose();
+  }
+
+  void _showUndoBanner(List<TaskItem> deletedTasks) {
+    _undoBannerTimer?.cancel();
+    setState(() => _pendingUndoTasks = deletedTasks);
+    _undoBannerTimer = Timer(const Duration(seconds: 8), () {
+      if (mounted) {
+        setState(() => _pendingUndoTasks = const []);
+      }
+    });
+  }
+
+  void _dismissUndoBanner() {
+    _undoBannerTimer?.cancel();
+    _undoBannerTimer = null;
+    if (_pendingUndoTasks.isNotEmpty) {
+      setState(() => _pendingUndoTasks = const []);
+    }
   }
 
   Future<void> _send() async {
@@ -57,7 +80,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
     final activeProvider = aiSettings.activeProvider;
 
     _inputCtrl.clear();
-    await chatProvider.sendScheduleMessage(
+    final deletedTasks = await chatProvider.sendScheduleMessage(
       text,
       activeProvider: activeProvider,
       taskProvider: taskProvider,
@@ -65,6 +88,10 @@ class _AiChatScreenState extends State<AiChatScreen> {
         activeProvider.copyWith(model: newModel),
       ),
     );
+
+    if (deletedTasks.isNotEmpty && mounted) {
+      _showUndoBanner(deletedTasks);
+    }
 
     if (mounted && _scrollCtrl.hasClients) {
       await Future<void>.delayed(const Duration(milliseconds: 80));
@@ -92,9 +119,11 @@ class _AiChatScreenState extends State<AiChatScreen> {
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: AppLayout.maxContentWidth),
-          child: Column(
+          child: Stack(
             children: [
-              Padding(
+              Column(
+                children: [
+                  Padding(
                 padding: const EdgeInsets.fromLTRB(
                   AppSpacing.lg,
                   AppSpacing.sm,
@@ -242,7 +271,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
                           textInputAction: TextInputAction.newline,
                           decoration: const InputDecoration(
                             hintText:
-                                'Paste notice, assignment, exam date & syllabus...',
+                                'Add a schedule, complete, reschedule, or remove tasks...',
                             border: InputBorder.none,
                             enabledBorder: InputBorder.none,
                             focusedBorder: InputBorder.none,
@@ -273,7 +302,123 @@ class _AiChatScreenState extends State<AiChatScreen> {
               ),
             ],
           ),
-        ),
+          Positioned(
+            top: AppSpacing.xs,
+            left: AppSpacing.lg,
+            right: AppSpacing.lg,
+            child: IgnorePointer(
+              ignoring: _pendingUndoTasks.isEmpty,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 220),
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                transitionBuilder: (child, anim) => FadeTransition(
+                  opacity: anim,
+                  child: SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(0, -0.25),
+                      end: Offset.zero,
+                    ).animate(anim),
+                    child: child,
+                  ),
+                ),
+                child: _pendingUndoTasks.isEmpty
+                    ? const SizedBox.shrink()
+                    : Center(
+                        key: const ValueKey('top-undo-popup'),
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 520),
+                          child: _TopUndoPopup(
+                            tasks: _pendingUndoTasks,
+                            onUndo: () async {
+                              final restore =
+                                  List<TaskItem>.from(_pendingUndoTasks);
+                              _dismissUndoBanner();
+                              await taskProvider.restoreDeletedTasks(restore);
+                            },
+                            onOk: _dismissUndoBanner,
+                          ),
+                        ),
+                      ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  ),
+  );
+  }
+}
+
+class _TopUndoPopup extends StatelessWidget {
+  const _TopUndoPopup({
+    required this.tasks,
+    required this.onUndo,
+    required this.onOk,
+  });
+
+  final List<TaskItem> tasks;
+  final VoidCallback onUndo;
+  final VoidCallback onOk;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.appColors;
+    final textTheme = Theme.of(context).textTheme;
+    final message = tasks.length == 1
+        ? 'Removed "${tasks.first.title}"'
+        : 'Removed ${tasks.length} tasks';
+
+    return GlassContainer(
+      borderRadius: AppRadius.lg,
+      blur: 14,
+      elevated: true,
+      borderColor: colors.glassBorder,
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.sm,
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.delete_outline_rounded,
+            size: 18,
+            color: colors.textSecondary,
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Text(
+              message,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: textTheme.bodySmall?.copyWith(
+                color: colors.textPrimary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.xs),
+          TextButton(
+            onPressed: onUndo,
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              minimumSize: const Size(48, 32),
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+            ),
+            child: const Text('Undo'),
+          ),
+          const SizedBox(width: 4),
+          FilledButton(
+            onPressed: onOk,
+            style: FilledButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              minimumSize: const Size(44, 32),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+            ),
+            child: const Text('OK'),
+          ),
+        ],
       ),
     );
   }
@@ -315,7 +460,7 @@ class _ChatEmptyState extends StatelessWidget {
               ),
               const SizedBox(height: AppSpacing.lg),
               Text(
-                'Paste any schedule in Bangla or English',
+                'Manage schedules & tasks in any language',
                 style: textTheme.titleMedium?.copyWith(
                   fontWeight: FontWeight.w700,
                 ),
@@ -323,7 +468,7 @@ class _ChatEmptyState extends StatelessWidget {
               ),
               const SizedBox(height: AppSpacing.sm),
               Text(
-                'AI extracts every deadline, creates structured checklists for your syllabus, and schedules both a day-before alert and an end-of-day completion reminder.',
+                'Paste notices to add tasks, or chat naturally to mark tasks done, reschedule deadlines, update syllabi, or remove items.',
                 style: textTheme.bodyMedium?.copyWith(
                   color: colors.textSecondary,
                 ),

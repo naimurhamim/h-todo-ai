@@ -221,12 +221,7 @@ class UpdateService {
                 ),
               ),
               const SizedBox(height: AppSpacing.xs),
-              Text(
-                notes,
-                style: textTheme.bodySmall?.copyWith(
-                  color: colors.textSecondary,
-                ),
-              ),
+              _ReleaseNotesView(markdown: notes),
             ],
           ),
         ),
@@ -281,6 +276,258 @@ class UpdateService {
           ),
         ],
       ),
+    );
+  }
+
+  /// Parses GitHub release Markdown notes into clean styled blocks without raw syntax symbols.
+  static List<ReleaseNoteBlock> parseReleaseNotes(String markdown) {
+    final blocks = <ReleaseNoteBlock>[];
+    final lines = markdown.replaceAll('\r\n', '\n').split('\n');
+    var inCodeFence = false;
+
+    for (final rawLine in lines) {
+      final line = rawLine.trim();
+      if (line.startsWith('```')) {
+        inCodeFence = !inCodeFence;
+        continue;
+      }
+      if (inCodeFence) {
+        if (line.isNotEmpty) {
+          blocks.add(
+            ReleaseNoteBlock(
+              kind: ReleaseNoteKind.paragraph,
+              segments: [ReleaseNoteSegment(line, code: true)],
+            ),
+          );
+        }
+        continue;
+      }
+      if (line.isEmpty) continue;
+      if (RegExp(r'^[-*_]{3,}$').hasMatch(line)) continue;
+
+      final headingMatch = RegExp(r'^#{1,6}\s+(.*)$').firstMatch(line);
+      if (headingMatch != null) {
+        final content = headingMatch.group(1)!.trim();
+        if (content.isNotEmpty) {
+          blocks.add(
+            ReleaseNoteBlock(
+              kind: ReleaseNoteKind.heading,
+              segments: _parseInlineSegments(content),
+            ),
+          );
+        }
+        continue;
+      }
+
+      final bulletMatch = RegExp(r'^(?:[-*+•])\s+(.*)$').firstMatch(line);
+      if (bulletMatch != null) {
+        final content = bulletMatch.group(1)!.trim();
+        if (content.isNotEmpty) {
+          blocks.add(
+            ReleaseNoteBlock(
+              kind: ReleaseNoteKind.bullet,
+              segments: _parseInlineSegments(content),
+            ),
+          );
+        }
+        continue;
+      }
+
+      final numberedMatch = RegExp(r'^(\d+\.)\s+(.*)$').firstMatch(line);
+      if (numberedMatch != null) {
+        final marker = numberedMatch.group(1)!;
+        final content = numberedMatch.group(2)!.trim();
+        if (content.isNotEmpty) {
+          blocks.add(
+            ReleaseNoteBlock(
+              kind: ReleaseNoteKind.numbered,
+              marker: marker,
+              segments: _parseInlineSegments(content),
+            ),
+          );
+        }
+        continue;
+      }
+
+      blocks.add(
+        ReleaseNoteBlock(
+          kind: ReleaseNoteKind.paragraph,
+          segments: _parseInlineSegments(line),
+        ),
+      );
+    }
+
+    return blocks;
+  }
+
+  static List<ReleaseNoteSegment> _parseInlineSegments(String input) {
+    // Convert `[label](url)` Markdown links to clean readable labels first.
+    final withLinksCleaned = input.replaceAllMapped(
+      RegExp(r'\[([^\]]+)\]\(([^)]+)\)'),
+      (m) => m.group(1) ?? '',
+    );
+
+    final segments = <ReleaseNoteSegment>[];
+    final tokenRegex = RegExp(
+      r'(\*\*(.+?)\*\*|__(.+?)__|`([^`]+)`|\*([^*]+?)\*)',
+    );
+    var cursor = 0;
+
+    for (final match in tokenRegex.allMatches(withLinksCleaned)) {
+      if (match.start > cursor) {
+        segments.add(
+          ReleaseNoteSegment(withLinksCleaned.substring(cursor, match.start)),
+        );
+      }
+      if (match.group(2) != null) {
+        segments.add(ReleaseNoteSegment(match.group(2)!, bold: true));
+      } else if (match.group(3) != null) {
+        segments.add(ReleaseNoteSegment(match.group(3)!, bold: true));
+      } else if (match.group(4) != null) {
+        segments.add(ReleaseNoteSegment(match.group(4)!, code: true));
+      } else if (match.group(5) != null) {
+        segments.add(ReleaseNoteSegment(match.group(5)!, italic: true));
+      }
+      cursor = match.end;
+    }
+
+    if (cursor < withLinksCleaned.length) {
+      segments.add(ReleaseNoteSegment(withLinksCleaned.substring(cursor)));
+    }
+
+    return segments.isEmpty ? [ReleaseNoteSegment(withLinksCleaned)] : segments;
+  }
+}
+
+enum ReleaseNoteKind { heading, bullet, numbered, paragraph }
+
+@immutable
+class ReleaseNoteSegment {
+  const ReleaseNoteSegment(
+    this.text, {
+    this.bold = false,
+    this.italic = false,
+    this.code = false,
+  });
+
+  final String text;
+  final bool bold;
+  final bool italic;
+  final bool code;
+}
+
+@immutable
+class ReleaseNoteBlock {
+  const ReleaseNoteBlock({
+    required this.kind,
+    required this.segments,
+    this.marker,
+  });
+
+  final ReleaseNoteKind kind;
+  final List<ReleaseNoteSegment> segments;
+  final String? marker;
+}
+
+class _ReleaseNotesView extends StatelessWidget {
+  const _ReleaseNotesView({required this.markdown});
+
+  final String markdown;
+
+  @override
+  Widget build(BuildContext context) {
+    final blocks = UpdateService.parseReleaseNotes(markdown);
+    final colors = context.appColors;
+    final textTheme = Theme.of(context).textTheme;
+
+    if (blocks.isEmpty) {
+      return Text(
+        'Bug fixes and performance improvements.',
+        style: textTheme.bodySmall?.copyWith(color: colors.textSecondary),
+      );
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var i = 0; i < blocks.length; i++)
+          _buildBlock(blocks[i], colors, textTheme, isFirst: i == 0),
+      ],
+    );
+  }
+
+  Widget _buildBlock(
+    ReleaseNoteBlock block,
+    AppColors colors,
+    TextTheme textTheme, {
+    required bool isFirst,
+  }) {
+    final baseStyle = (block.kind == ReleaseNoteKind.heading
+            ? textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: colors.textPrimary,
+              )
+            : textTheme.bodySmall?.copyWith(
+                color: colors.textSecondary,
+                height: 1.4,
+              )) ??
+        const TextStyle(fontSize: 13);
+
+    final rich = Text.rich(
+      TextSpan(
+        style: baseStyle,
+        children: [
+          for (final seg in block.segments)
+            TextSpan(
+              text: seg.text,
+              style: TextStyle(
+                fontWeight: seg.bold ? FontWeight.w700 : null,
+                fontStyle: seg.italic ? FontStyle.italic : null,
+                fontFamily: seg.code ? 'monospace' : null,
+                color: (seg.bold || seg.code) ? colors.textPrimary : null,
+                backgroundColor: seg.code ? colors.surfaceSubtle : null,
+              ),
+            ),
+        ],
+      ),
+    );
+
+    if (block.kind == ReleaseNoteKind.heading) {
+      return Padding(
+        padding: EdgeInsets.only(top: isFirst ? 0 : AppSpacing.sm, bottom: 4),
+        child: rich,
+      );
+    }
+
+    if (block.kind == ReleaseNoteKind.bullet ||
+        block.kind == ReleaseNoteKind.numbered) {
+      final prefix =
+          block.kind == ReleaseNoteKind.bullet ? '•' : (block.marker ?? '•');
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: block.kind == ReleaseNoteKind.bullet ? 14 : 22,
+              child: Text(
+                prefix,
+                style: baseStyle.copyWith(
+                  color: colors.primary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            Expanded(child: rich),
+          ],
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: rich,
     );
   }
 }

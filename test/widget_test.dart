@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:h_todo_ai/app.dart';
 import 'package:h_todo_ai/models/ai_provider_config.dart';
 import 'package:h_todo_ai/models/chat_message.dart';
+import 'package:h_todo_ai/models/google_account_profile.dart';
 import 'package:h_todo_ai/models/security_settings.dart';
 import 'package:h_todo_ai/models/task_item.dart';
 import 'package:h_todo_ai/services/cloud_backup_service.dart';
@@ -296,7 +297,7 @@ void main() {
       reason: 'Expected AI Chat tab to be active after tapping center orb',
     );
     expect(
-      find.text('Paste any schedule in Bangla or English'),
+      find.text('Manage schedules & tasks in any language'),
       findsNothing,
       reason: 'Expected pre-seeded htodo_chat_v1 messages to load',
     );
@@ -323,5 +324,48 @@ void main() {
     expect(find.text('naimurrashid.dev'), findsOneWidget);
     expect(find.text('github.com/naimurhamim'), findsOneWidget);
     expect(find.text('md-naimur-rashid'), findsOneWidget);
+  });
+
+  testWidgets(
+      'Profile shows cached Google Name/Gmail and expands Drive Export/Import at 390x844',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    const cachedProfile = GoogleAccountProfile(
+      id: 'g-123',
+      email: 'student.demo@gmail.com',
+      displayName: 'Test Student',
+    );
+    SharedPreferences.setMockInitialValues({
+      'htodo_google_profile_v1': jsonEncode(cachedProfile.toJson()),
+    });
+
+    await tester.pumpWidget(
+      HTodoApp(
+        storage: StorageService(),
+        notifications: NotificationService(),
+        cloudBackup: CloudBackupService.disabled(),
+        securityService: SecurityService.disabled(),
+        skipSplash: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.bySemanticsLabel('Profile'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Test Student'), findsOneWidget);
+    expect(find.text('student.demo@gmail.com'), findsOneWidget);
+
+    final backupTile = find.text('Google Drive & Data Backup');
+    await tester.ensureVisible(backupTile);
+    await tester.tap(backupTile);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Export JSON'), findsOneWidget);
+    expect(find.text('Import JSON'), findsOneWidget);
   });
 }

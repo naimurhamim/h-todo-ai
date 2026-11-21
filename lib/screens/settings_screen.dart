@@ -150,7 +150,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           const SizedBox(height: 2),
                           Text(
                             cloud.isSignedIn
-                                ? (cloud.userEmail ?? 'Google Sync Enabled')
+                                ? (cloud.userEmail ?? 'Private Google Drive')
                                 : 'Local device profile',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -166,7 +166,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   icon: Icons.login_rounded,
                                   label: cloud.isAvailable
                                       ? 'Google Sign-In'
-                                      : 'Cloud Sync',
+                                      : 'Data Backup',
                                   onTap: () {
                                     if (cloud.isAvailable) {
                                       cloud.signInWithGoogle();
@@ -367,10 +367,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     const Divider(height: 1),
                     _ProfileAccordionSection(
                       icon: Icons.cloud_outlined,
-                      title: 'Cloud Backup (Google)',
+                      title: 'Google Drive & Data Backup',
                       subtitle: cloud.isSignedIn
-                          ? 'Synced to ${cloud.userEmail ?? 'Firebase'}'
-                          : 'Back up tasks, chats & API keys',
+                          ? 'Private Drive (${cloud.userEmail ?? 'Connected'})'
+                          : 'Private Google Drive sync & JSON Export/Import',
                       expanded: _expandedSection == 'cloud',
                       onToggle: () => _toggleSection('cloud'),
                       child: const Padding(
@@ -419,13 +419,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     const _AboutInfoRow(
                       icon: Icons.storage_outlined,
                       title: 'Data Storage',
-                      subtitle: 'Local storage with automatic Firebase backup',
+                      subtitle:
+                          'On-device + private Google Drive (appDataFolder)',
                     ),
                     const Divider(height: 1),
                     const _AboutInfoRow(
                       icon: Icons.verified_user_outlined,
                       title: 'Privacy',
-                      subtitle: 'Your keys and schedules remain under your account',
+                      subtitle:
+                          'Backups stay in your own Google Drive; zero server access',
                     ),
                   ],
                 ),

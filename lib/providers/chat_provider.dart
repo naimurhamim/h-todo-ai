@@ -3,6 +3,7 @@ import 'package:uuid/uuid.dart';
 
 import '../models/ai_provider_config.dart';
 import '../models/chat_message.dart';
+import '../models/task_item.dart';
 import '../services/ai_parser_service.dart';
 import '../services/storage_service.dart';
 import 'task_provider.dart';
@@ -39,15 +40,16 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> sendScheduleMessage(
+  Future<List<TaskItem>> sendScheduleMessage(
     String text, {
     required AiProviderConfig activeProvider,
     required TaskProvider taskProvider,
     Future<void> Function(String newModel)? onModelResolved,
   }) async {
     final trimmed = text.trim();
-    if (trimmed.isEmpty || _isSending) return;
+    if (trimmed.isEmpty || _isSending) return const [];
 
+    final priorHistory = List<ChatMessage>.from(_messages);
     final userMessage = ChatMessage(
       id: _uuid.v4(),
       role: ChatRole.user,
@@ -62,7 +64,7 @@ class ChatProvider extends ChangeNotifier {
         id: _uuid.v4(),
         role: ChatRole.assistant,
         text:
-            'No API key configured for ${activeProvider.displayName}. Open Settings, paste your API key, and make sure it is marked Active.',
+            'No API key configured for ${activeProvider.displayName}. Open Profile -> AI API Keys and add your key.',
         timestamp: DateTime.now(),
         isError: true,
         providerName: activeProvider.displayName,
@@ -70,39 +72,46 @@ class ChatProvider extends ChangeNotifier {
       _messages = [..._messages, errMsg];
       await _storage.saveChatMessages(_messages);
       notifyListeners();
-      return;
+      return const [];
     }
 
     _isSending = true;
     notifyListeners();
 
+    var deletedTasks = const <TaskItem>[];
     try {
-      final result = await _parser.extractTasks(
+      final result = await _parser.processChatCommand(
         trimmed,
         activeProvider,
         existingTasks: taskProvider.tasks,
+        recentMessages: priorHistory,
       );
       if (result.resolvedModel != null &&
           result.resolvedModel != activeProvider.model.trim()) {
         await onModelResolved?.call(result.resolvedModel!);
       }
-      final upsert = await taskProvider.upsertParsedTasks(result.tasks);
-      final statusNotes = <String>[
-        if (upsert.added > 0) '${upsert.added} added',
-        if (upsert.updated > 0) '${upsert.updated} updated',
-        if (upsert.skipped > 0) '${upsert.skipped} skipped as duplicate',
+
+      final exec = await taskProvider.executeAiActions(result.actions);
+      deletedTasks = exec.deletedTasks;
+
+      final linkedIds = <String>[
+        ...exec.affectedTaskIds,
+        for (final id in result.referencedTaskIds)
+          if (!exec.affectedTaskIds.contains(id) &&
+              taskProvider.findById(id) != null)
+            id,
       ];
-      final summaryText = (upsert.updated > 0 || upsert.skipped > 0) &&
-              statusNotes.isNotEmpty
-          ? '${result.summary}\n(${statusNotes.join(', ')})'
-          : result.summary;
+
+      final replyText = exec.skipped > 0
+          ? '${result.reply}\n(${exec.skipped} skipped as duplicate)'
+          : result.reply;
 
       final assistantMessage = ChatMessage(
         id: _uuid.v4(),
         role: ChatRole.assistant,
-        text: summaryText,
+        text: replyText,
         timestamp: DateTime.now(),
-        createdTaskIds: upsert.affectedTaskIds,
+        createdTaskIds: linkedIds,
         providerName: activeProvider.displayName,
       );
       _messages = [..._messages, assistantMessage];
@@ -120,7 +129,7 @@ class ChatProvider extends ChangeNotifier {
       final errMessage = ChatMessage(
         id: _uuid.v4(),
         role: ChatRole.assistant,
-        text: 'Failed to parse schedule: $e',
+        text: 'Failed to process request: $e',
         timestamp: DateTime.now(),
         isError: true,
         providerName: activeProvider.displayName,
@@ -132,6 +141,7 @@ class ChatProvider extends ChangeNotifier {
       notifyListeners();
       _onDataChanged?.call();
     }
+    return deletedTasks;
   }
 
   Future<void> clearHistory() async {

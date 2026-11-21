@@ -177,4 +177,39 @@ void main() {
     expect(UpdateService.isNewerVersion('v1.0.0', '1.0.0'), isFalse);
     expect(UpdateService.isNewerVersion('0.9.9', '1.0.0'), isFalse);
   });
+
+  test('UpdateService.parseReleaseNotes strips Markdown syntax cleanly', () {
+    const markdown = '''
+## What's New
+- **Private Google Drive Backup:** Auto-syncs to `appDataFolder` cleanly.
+* *Smart* updates with [Release Page](https://github.com/naimurhamim/h-todo-ai)
+1. Added top rounded `Undo` and `OK` popup.
+---
+''';
+    final blocks = UpdateService.parseReleaseNotes(markdown);
+    expect(blocks, hasLength(4));
+    expect(blocks[0].kind, ReleaseNoteKind.heading);
+    expect(blocks[0].segments.map((s) => s.text).join(), "What's New");
+
+    expect(blocks[1].kind, ReleaseNoteKind.bullet);
+    expect(
+      blocks[1].segments.where((s) => s.bold).map((s) => s.text).join(),
+      'Private Google Drive Backup:',
+    );
+    expect(
+      blocks[1].segments.where((s) => s.code).map((s) => s.text).join(),
+      'appDataFolder',
+    );
+    expect(blocks[1].segments.map((s) => s.text).join(), isNot(contains('**')));
+    expect(blocks[1].segments.map((s) => s.text).join(), isNot(contains('`')));
+
+    expect(blocks[2].kind, ReleaseNoteKind.bullet);
+    expect(
+      blocks[2].segments.map((s) => s.text).join(),
+      'Smart updates with Release Page',
+    );
+
+    expect(blocks[3].kind, ReleaseNoteKind.numbered);
+    expect(blocks[3].marker, '1.');
+  });
 }

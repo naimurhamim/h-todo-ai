@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
+import 'package:uuid/uuid.dart';
 
+import '../models/ai_chat_action.dart';
 import '../models/reminder_settings.dart';
 import '../models/task_item.dart';
 import '../services/notification_service.dart';
@@ -39,6 +41,42 @@ class TaskUpsertResult {
   final int updated;
   final int skipped;
   final List<String> affectedTaskIds;
+}
+
+/// Summary of executing batch To-Do actions parsed from AI chat.
+class TaskActionExecutionResult {
+  const TaskActionExecutionResult({
+    this.added = 0,
+    this.updated = 0,
+    this.skipped = 0,
+    this.completed = 0,
+    this.uncompleted = 0,
+    this.rescheduled = 0,
+    this.deleted = 0,
+    this.subtasksUpdated = 0,
+    this.affectedTaskIds = const [],
+    this.deletedTasks = const [],
+  });
+
+  final int added;
+  final int updated;
+  final int skipped;
+  final int completed;
+  final int uncompleted;
+  final int rescheduled;
+  final int deleted;
+  final int subtasksUpdated;
+  final List<String> affectedTaskIds;
+  final List<TaskItem> deletedTasks;
+
+  bool get hasChanges =>
+      added > 0 ||
+      updated > 0 ||
+      completed > 0 ||
+      uncompleted > 0 ||
+      rescheduled > 0 ||
+      deleted > 0 ||
+      subtasksUpdated > 0;
 }
 
 /// Manages tasks, filters, completion cross-off state, and reminder syncing.
@@ -193,6 +231,282 @@ class TaskProvider extends ChangeNotifier {
       skipped: skipped,
       affectedTaskIds: affectedIds,
     );
+  }
+
+  /// Executes a batch of conversational To-Do actions (add, complete, uncomplete,
+  /// delete, reschedule, update, subtask toggle) atomically with one save & sync.
+  Future<TaskActionExecutionResult> executeAiActions(
+    List<AiTaskAction> actions,
+  ) async {
+    if (actions.isEmpty) {
+      return const TaskActionExecutionResult();
+    }
+
+    const uuid = Uuid();
+    final working = List<TaskItem>.from(_tasks);
+    final toSchedule = <TaskItem>[];
+    final toCancel = <TaskItem>[];
+    final affectedIds = <String>[];
+    final deletedSnapshots = <TaskItem>[];
+
+    var added = 0;
+    var updated = 0;
+    var skipped = 0;
+    var completed = 0;
+    var uncompleted = 0;
+    var rescheduled = 0;
+    var deleted = 0;
+    var subtasksUpdated = 0;
+
+    void markAffected(String id) {
+      if (!affectedIds.contains(id)) {
+        affectedIds.add(id);
+      }
+    }
+
+    for (final action in actions) {
+      if (action.type == AiActionType.add) {
+        final candidate = action.newTask;
+        if (candidate == null) continue;
+        final dupIndex = working.indexWhere(
+          (existing) => _isSameScheduledTask(existing, candidate),
+        );
+        if (dupIndex == -1) {
+          working.add(candidate);
+          toSchedule.add(candidate);
+          markAffected(candidate.id);
+          added++;
+        } else {
+          final existing = working[dupIndex];
+          final merged = _mergeTaskDetails(existing, candidate);
+          if (merged != null) {
+            working[dupIndex] = merged;
+            if (!merged.isCompleted) {
+              toSchedule.add(merged);
+            }
+            markAffected(merged.id);
+            updated++;
+          } else {
+            markAffected(existing.id);
+            skipped++;
+          }
+        }
+        continue;
+      }
+
+      final idx = _resolveTargetIndex(working, action.taskId, action.taskQuery);
+      if (idx == -1) continue;
+      final current = working[idx];
+
+      switch (action.type) {
+        case AiActionType.add:
+          break;
+        case AiActionType.complete:
+          if (!current.isCompleted) {
+            final next = current.copyWith(
+              isCompleted: true,
+              completedAt: DateTime.now(),
+            );
+            working[idx] = next;
+            toCancel.add(next);
+            completed++;
+          }
+          markAffected(current.id);
+        case AiActionType.uncomplete:
+          if (current.isCompleted) {
+            final next = current.copyWith(
+              isCompleted: false,
+              clearCompletedAt: true,
+            );
+            working[idx] = next;
+            toSchedule.add(next);
+            uncompleted++;
+          }
+          markAffected(current.id);
+        case AiActionType.delete:
+          deletedSnapshots.add(current);
+          toCancel.add(current);
+          working.removeAt(idx);
+          affectedIds.remove(current.id);
+          deleted++;
+        case AiActionType.reschedule:
+        case AiActionType.update:
+          final nextDate = action.newDueDate ?? current.dueDate;
+          final hasNewTime =
+              action.newDueHour != null && action.newDueMinute != null;
+          final mergedSubs = _mergeNewSubtaskTitles(
+            current.subtasks,
+            action.addSubtasks,
+            uuid,
+          );
+          final nextNotes = _mergeActionNotes(current.notes, action.newNotes);
+          final next = current.copyWith(
+            title: action.newTitle ?? current.title,
+            courseOrCategory:
+                action.newCourseOrCategory ?? current.courseOrCategory,
+            type: action.newTaskType ?? current.type,
+            priority: action.newPriority ?? current.priority,
+            dueDate: nextDate,
+            dueHour: hasNewTime ? action.newDueHour : current.dueHour,
+            dueMinute: hasNewTime ? action.newDueMinute : current.dueMinute,
+            clearDueTime: action.clearDueTime && !hasNewTime,
+            notes: nextNotes,
+            subtasks: mergedSubs,
+          );
+          final dateOrTimeChanged = next.dateKey != current.dateKey ||
+              next.dueHour != current.dueHour ||
+              next.dueMinute != current.dueMinute;
+          working[idx] = next;
+          if (!next.isCompleted &&
+              (dateOrTimeChanged || next.title != current.title)) {
+            toSchedule.add(next);
+          }
+          if (action.type == AiActionType.reschedule || dateOrTimeChanged) {
+            rescheduled++;
+          } else {
+            updated++;
+          }
+          markAffected(next.id);
+        case AiActionType.completeSubtask:
+        case AiActionType.uncompleteSubtask:
+          final targetDone = action.type == AiActionType.completeSubtask;
+          final queryNorm = _normalizeKey(action.subtaskTitle ?? '');
+          if (queryNorm.isEmpty) break;
+          var changedSub = false;
+          final updatedSubs = current.subtasks.map((s) {
+            final subNorm = _normalizeKey(s.title);
+            final matches = subNorm == queryNorm ||
+                subNorm.contains(queryNorm) ||
+                queryNorm.contains(subNorm);
+            if (matches && s.isCompleted != targetDone) {
+              changedSub = true;
+              return s.copyWith(isCompleted: targetDone);
+            }
+            return s;
+          }).toList();
+          if (changedSub) {
+            working[idx] = current.copyWith(subtasks: updatedSubs);
+            subtasksUpdated++;
+          }
+          markAffected(current.id);
+      }
+    }
+
+    final result = TaskActionExecutionResult(
+      added: added,
+      updated: updated,
+      skipped: skipped,
+      completed: completed,
+      uncompleted: uncompleted,
+      rescheduled: rescheduled,
+      deleted: deleted,
+      subtasksUpdated: subtasksUpdated,
+      affectedTaskIds: affectedIds,
+      deletedTasks: deletedSnapshots,
+    );
+
+    if (result.hasChanges) {
+      _tasks = working;
+      await _storage.saveTasks(_tasks);
+      final settings = _readReminderSettings();
+      for (final task in toCancel) {
+        await _notifications.cancelForTask(task);
+      }
+      for (final task in toSchedule) {
+        await _notifications.scheduleForTask(task, settings);
+      }
+      notifyListeners();
+      _onDataChanged?.call();
+    }
+
+    return result;
+  }
+
+  /// Restores tasks deleted via AI chat when the user taps Undo.
+  Future<void> restoreDeletedTasks(List<TaskItem> restored) async {
+    if (restored.isEmpty) return;
+    final existingIds = _tasks.map((t) => t.id).toSet();
+    final toAdd = restored.where((t) => !existingIds.contains(t.id)).toList();
+    if (toAdd.isEmpty) return;
+
+    _tasks = [..._tasks, ...toAdd];
+    await _storage.saveTasks(_tasks);
+    final settings = _readReminderSettings();
+    for (final task in toAdd) {
+      if (!task.isCompleted) {
+        await _notifications.scheduleForTask(task, settings);
+      }
+    }
+    notifyListeners();
+    _onDataChanged?.call();
+  }
+
+  static int _resolveTargetIndex(
+    List<TaskItem> working,
+    String? taskId,
+    String? taskQuery,
+  ) {
+    final cleanedId = taskId?.trim() ?? '';
+    if (cleanedId.isNotEmpty) {
+      final exact = working.indexWhere((t) => t.id == cleanedId);
+      if (exact != -1) return exact;
+    }
+
+    final queryNorm = _normalizeKey(taskQuery ?? '');
+    if (queryNorm.isEmpty) return -1;
+
+    final exactIndices = <int>[];
+    final fuzzyIndices = <int>[];
+    for (var i = 0; i < working.length; i++) {
+      final t = working[i];
+      final titleNorm = _normalizeKey(t.title);
+      final combinedNorm = _normalizeKey('${t.courseOrCategory} ${t.title}');
+      if (titleNorm == queryNorm || combinedNorm == queryNorm) {
+        exactIndices.add(i);
+      } else if (titleNorm.contains(queryNorm) ||
+          combinedNorm.contains(queryNorm) ||
+          (titleNorm.length >= 3 && queryNorm.contains(titleNorm))) {
+        fuzzyIndices.add(i);
+      }
+    }
+
+    if (exactIndices.length == 1) return exactIndices.first;
+    if (exactIndices.isEmpty && fuzzyIndices.length == 1) {
+      return fuzzyIndices.first;
+    }
+    return -1;
+  }
+
+  static List<SubTaskItem> _mergeNewSubtaskTitles(
+    List<SubTaskItem> existing,
+    List<String> incomingTitles,
+    Uuid uuid,
+  ) {
+    if (incomingTitles.isEmpty) return existing;
+    final seen = existing
+        .map((s) => _normalizeKey(s.title))
+        .where((k) => k.isNotEmpty)
+        .toSet();
+    final added = <SubTaskItem>[];
+    for (final raw in incomingTitles) {
+      final trimmed = raw.trim();
+      final key = _normalizeKey(trimmed);
+      if (key.isEmpty || seen.contains(key)) continue;
+      seen.add(key);
+      added.add(SubTaskItem(id: uuid.v4(), title: trimmed));
+    }
+    return added.isEmpty ? existing : [...existing, ...added];
+  }
+
+  static String _mergeActionNotes(String existingNotes, String? incomingNotes) {
+    final incoming = incomingNotes?.trim() ?? '';
+    if (incoming.isEmpty) return existingNotes;
+    if (_normalizeKey(existingNotes).contains(_normalizeKey(incoming))) {
+      return existingNotes;
+    }
+    return existingNotes.trim().isEmpty
+        ? incoming
+        : '${existingNotes.trim()}\n\n$incoming';
   }
 
   static String _normalizeKey(String raw) => raw

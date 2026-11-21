@@ -10,7 +10,7 @@ An AI-powered academic and personal task planner built with Flutter, featuring n
 - **Light & Dark Glassmorphism UI:** Smooth frosted cards, ambient backdrops, bottom-anchored AI chat with per-message copy, progress rings, and quick theme switching.
 - **Dual Local Notifications:** Automatic reminders at `4:00 PM` the day before a deadline and `10:00 PM` on the due day (customizable in Profile -> Reminders), plus an Overview Notifications sheet showing countdowns.
 - **Privacy & App Lock:** Optional 4-digit PIN and fingerprint/biometric unlock on app launch and resume.
-- **Google Sign-In & Cloud Backup:** Automatic debounced backup and restore via Firebase Auth & Cloud Firestore.
+- **Private Google Drive Sync & JSON Export/Import:** Automatic single-file backup to each user's private Google Drive `appDataFolder` on every change (with one-time migration from legacy Firebase backups) plus portable offline JSON export and merge/replace import.
 - **In-App Update Checker:** Verifies the latest GitHub Release from Profile -> About -> Check for Updates.
 
 ## Local Setup

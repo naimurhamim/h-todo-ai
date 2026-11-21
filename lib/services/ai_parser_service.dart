@@ -5,7 +5,9 @@ import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 
+import '../models/ai_chat_action.dart';
 import '../models/ai_provider_config.dart';
+import '../models/chat_message.dart';
 import '../models/task_item.dart';
 
 /// Parsed output from an AI schedule extraction call.
@@ -123,6 +125,85 @@ class AiParserService {
       return AiParseResult(
         summary: parsed.summary,
         tasks: parsed.tasks,
+        resolvedModel: fallback,
+      );
+    }
+  }
+
+  /// Processes any natural-language To-Do command (add, complete, delete,
+  /// reschedule, update syllabus/notes, subtask toggle, or task query) in
+  /// any language while declining non-To-Do ChatGPT prompts.
+  Future<AiAssistantResponse> processChatCommand(
+    String userMessage,
+    AiProviderConfig config, {
+    DateTime? now,
+    List<TaskItem> existingTasks = const [],
+    List<ChatMessage> recentMessages = const [],
+  }) async {
+    final trimmed = userMessage.trim();
+    if (trimmed.isEmpty) {
+      throw const AiParserException('Please enter a message or task command.');
+    }
+    if (!config.hasKey) {
+      throw AiParserException(
+        '${config.displayName} API key is empty. Add and save a key in Profile.',
+      );
+    }
+    if (config.model.trim().isEmpty) {
+      throw AiParserException(
+        'Model name is required for ${config.displayName}.',
+      );
+    }
+    if (config.id == AiProviderType.custom && config.baseUrl.trim().isEmpty) {
+      throw const AiParserException(
+        'Base URL is required for Custom OpenAI-Compatible provider.',
+      );
+    }
+
+    final referenceNow = now ?? DateTime.now();
+    final systemPrompt = _buildAssistantSystemPrompt(
+      referenceNow,
+      existingTasks: existingTasks,
+      recentMessages: recentMessages,
+    );
+
+    try {
+      final rawReply = await _invokeChat(
+        config: config,
+        systemPrompt: systemPrompt,
+        userPrompt: trimmed,
+        jsonMode: true,
+        timeout: _requestTimeout,
+      );
+      return parseAssistantResponse(rawReply, fallbackDate: referenceNow);
+    } on AiParserException catch (e) {
+      if (!_isModelUnavailableError(e.message, statusCode: e.statusCode)) {
+        rethrow;
+      }
+      final liveModels = await _safeFetchModels(config);
+      final fallback = liveModels.firstWhere(
+        (m) => m != config.model.trim(),
+        orElse: () => '',
+      );
+      if (fallback.isEmpty) rethrow;
+
+      final retryConfig = config.copyWith(model: fallback);
+      final rawReply = await _invokeChat(
+        config: retryConfig,
+        systemPrompt: systemPrompt,
+        userPrompt: trimmed,
+        jsonMode: true,
+        timeout: _requestTimeout,
+      );
+      final parsed = parseAssistantResponse(
+        rawReply,
+        fallbackDate: referenceNow,
+      );
+      return AiAssistantResponse(
+        reply: parsed.reply,
+        actions: parsed.actions,
+        referencedTaskIds: parsed.referencedTaskIds,
+        offTopic: parsed.offTopic,
         resolvedModel: fallback,
       );
     }
@@ -848,5 +929,315 @@ Respond with ONLY a valid JSON object (no markdown fences, no commentary) matchi
     if (hour < 0 || hour > 23) return null;
 
     return (hour, minute);
+  }
+
+  static String _buildAssistantSystemPrompt(
+    DateTime now, {
+    List<TaskItem> existingTasks = const [],
+    List<ChatMessage> recentMessages = const [],
+  }) {
+    final today = DateFormat('yyyy-MM-dd (EEEE), HH:mm').format(now);
+
+    final pendingFirst = [
+      ...existingTasks.where((t) => !t.isCompleted),
+      ...existingTasks.where((t) => t.isCompleted).take(12),
+    ].take(50).toList();
+
+    final tasksBlock = pendingFirst.isEmpty
+        ? 'No saved tasks yet.'
+        : pendingFirst.map((t) {
+            final subs = t.subtasks.isEmpty
+                ? 'none'
+                : t.subtasks
+                    .map((s) => '${s.isCompleted ? "[x]" : "[ ]"} ${s.title}')
+                    .join('; ');
+            final dueTime = t.formattedDueTime ?? 'none';
+            return '- id=${t.id} | status=${t.isCompleted ? "DONE" : "PENDING"} | '
+                'title="${t.title}" | course="${t.courseOrCategory}" | '
+                'type=${t.type.name} | due=${t.dateKey} $dueTime | '
+                'priority=${t.priority.name} | subtasks=[$subs]';
+          }).join('\n');
+
+    final historyList =
+        recentMessages.where((m) => !m.isError).toList();
+    final recentSlice = historyList.length <= 6
+        ? historyList
+        : historyList.sublist(historyList.length - 6);
+    final historyBlock = recentSlice.isEmpty
+        ? ''
+        : '''
+
+Recent chat context (oldest to newest, for resolving pronouns like "it", "that", "eta", "এটা"):
+${recentSlice.map((m) {
+            final roleLabel = m.role == ChatRole.user ? 'User' : 'Assistant';
+            final snippet = m.text.replaceAll('\n', ' ').trim();
+            final short = snippet.length > 220
+                ? '${snippet.substring(0, 220)}...'
+                : snippet;
+            return '$roleLabel: $short';
+          }).join('\n')}
+''';
+
+    return '''
+You are H-TODO AI, a dedicated To-Do, Academic Schedule, Reminder, and Syllabus Assistant.
+Current local date & time: $today.
+
+STRICT DOMAIN BOUNDARY:
+- You ONLY manage the user's tasks, assignments, class tests, exams, labs, meetings, syllabi/checklists, deadlines, and reminders, or answer questions about their saved task list.
+- If the user asks anything unrelated (general ChatGPT trivia, programming help, stories, math homework, weather, chitchat), DO NOT answer that request. Set "offTopic": true, "actions": [], "referencedTaskIds": [], and write a polite 1-sentence refusal in the user's language stating that you only manage H-TODO AI tasks and schedules.
+
+MULTILINGUAL RULES:
+- Understand the user's message in ANY language (English, Bengali / বাংলা, Banglish, Hindi, Arabic, Spanish, etc.), including non-Latin digits (e.g. ০-৯) and relative dates (tomorrow, next Monday, 2 days later, কাল, আগামী শুক্রবার).
+- ALWAYS write "reply" clearly and concisely (1-3 sentences, no markdown code blocks) in the SAME primary language the user wrote in.
+- Convert all dates to "YYYY-MM-DD" and times to 24-hour "HH:mm" (or null).
+
+ACTIONS YOU CAN PERFORM:
+- "add": Create new task(s) from schedules/notices or user commands. If an identical existing task already exists on the same date/time and the user is repeating a notice, reuse its exact title & courseOrCategory so duplicate protection can merge updates cleanly.
+- "complete": Mark an existing task completed.
+- "uncomplete": Reopen a completed task as pending.
+- "delete": Remove/delete an existing task.
+- "reschedule": Change due date and/or due time of an existing task. Leave "dueTime" omitted if user only asks to move the date and didn't change the time, or set "clearDueTime": true if user explicitly removes the time.
+- "update": Change "title", "courseOrCategory", "type", "priority", "notes", or append checklist items via "addSubtasks".
+- "complete_subtask" / "uncomplete_subtask": Check or uncheck a syllabus item ("subtaskTitle") inside an existing task.
+- Queries ("What is due tomorrow?", "Which tasks are pending?", "কাল কী আছে?"): Set "actions": [], put matching IDs in "referencedTaskIds", and summarize concisely in "reply".
+
+AMBIGUITY SAFETY:
+- Match existing tasks using exact "taskId" from the list below.
+- If a command like delete/complete/reschedule could refer to 2+ different tasks and it is unclear which one, set "actions": [] and ask a concise clarifying question naming the possible tasks.
+
+Current saved tasks:
+$tasksBlock$historyBlock
+
+Respond with ONLY a valid JSON object matching this schema:
+{
+  "reply": "string in the user's language",
+  "offTopic": false,
+  "referencedTaskIds": ["existing-task-id"],
+  "actions": [
+    {
+      "type": "add|complete|uncomplete|delete|reschedule|update|complete_subtask|uncomplete_subtask",
+      "taskId": "exact existing id for non-add actions, or null",
+      "taskQuery": "task title fallback if needed",
+      "subtaskTitle": "subtask name for subtask actions",
+      "dueDate": "YYYY-MM-DD (for add/reschedule/update)",
+      "dueTime": "HH:mm or null",
+      "clearDueTime": false,
+      "title": "string",
+      "courseOrCategory": "string",
+      "taskType": "assignment|classTest|exam|lab|meeting|task",
+      "priority": "high|medium|low",
+      "notes": "string",
+      "addSubtasks": ["string"]
+    }
+  ]
+}
+For "add" actions you may put title/dueDate/dueTime/courseOrCategory/taskType/priority/notes/addSubtasks directly on the action object (or nested under "task").
+''';
+  }
+
+  /// Parses the multilingual To-Do assistant JSON response into structured actions.
+  static AiAssistantResponse parseAssistantResponse(
+    String rawText, {
+    required DateTime fallbackDate,
+  }) {
+    final jsonString = _extractJsonObject(rawText);
+    if (jsonString == null) {
+      throw const AiParserException(
+        'AI response did not contain a valid JSON command.',
+      );
+    }
+
+    final Map<String, dynamic> root;
+    try {
+      final decoded = jsonDecode(jsonString);
+      if (decoded is! Map<String, dynamic>) {
+        throw const AiParserException('AI response root is not a JSON object.');
+      }
+      root = decoded;
+    } catch (e) {
+      throw AiParserException('Could not parse AI JSON response: $e');
+    }
+
+    final offTopic = root['offTopic'] == true;
+    var reply = (root['reply'] ?? root['summary'] ?? '').toString().trim();
+
+    final referencedIds = (root['referencedTaskIds'] as List<dynamic>? ?? const [])
+        .map((e) => e.toString().trim())
+        .where((id) => id.isNotEmpty)
+        .toList();
+
+    final parsedActions = <AiTaskAction>[];
+    final rawActions = root['actions'];
+    final now = DateTime.now();
+
+    if (rawActions is List && rawActions.isNotEmpty) {
+      for (final rawItem in rawActions) {
+        if (rawItem is! Map) continue;
+        final item = Map<String, dynamic>.from(rawItem);
+        final actionType = AiActionType.fromString(item['type']?.toString());
+        if (actionType == null) continue;
+
+        if (actionType == AiActionType.add) {
+          final taskMap = item['task'] is Map
+              ? Map<String, dynamic>.from(item['task'] as Map)
+              : item;
+          final title = (taskMap['title']?.toString() ?? '').trim();
+          if (title.isEmpty) continue;
+
+          final parsedDate = _parseDate(
+                taskMap['dueDate']?.toString(),
+                fallbackDate: fallbackDate,
+              ) ??
+              DateTime(fallbackDate.year, fallbackDate.month, fallbackDate.day);
+          final parsedTime = _parseTime(taskMap['dueTime']?.toString());
+          final rawSubs = (taskMap['subtasks'] ??
+                  taskMap['addSubtasks'] ??
+                  const <dynamic>[]) as List<dynamic>? ??
+              const [];
+          final subtasks = rawSubs
+              .map((e) => e.toString().trim())
+              .where((s) => s.isNotEmpty)
+              .map((s) => SubTaskItem(id: _uuid.v4(), title: s))
+              .toList();
+
+          final taskId = _uuid.v4();
+          final newTask = TaskItem(
+            id: taskId,
+            notificationBaseId: TaskItem.stableBaseIdFromUuid(taskId),
+            title: title,
+            courseOrCategory:
+                (taskMap['courseOrCategory']?.toString() ?? '').trim(),
+            type: TaskType.fromString(
+              (taskMap['taskType'] ?? taskMap['type'])?.toString(),
+            ),
+            priority: TaskPriority.fromString(taskMap['priority']?.toString()),
+            dueDate: parsedDate,
+            dueHour: parsedTime?.$1,
+            dueMinute: parsedTime?.$2,
+            notes: (taskMap['notes']?.toString() ?? '').trim(),
+            subtasks: subtasks,
+            createdAt: now,
+          );
+          parsedActions.add(
+            AiTaskAction(type: AiActionType.add, newTask: newTask),
+          );
+        } else {
+          final targetId = _nullIfBlank(item['taskId']?.toString());
+          final query = _nullIfBlank(
+            (item['taskQuery'] ?? item['title'])?.toString(),
+          );
+          final parsedDue = _tryParseStrictDate(
+            (item['newDueDate'] ?? item['dueDate'])?.toString(),
+          );
+          final parsedTime = _parseTime(
+            (item['newDueTime'] ?? item['dueTime'])?.toString(),
+          );
+          final clearDueTime = item['clearDueTime'] == true;
+          final rawNewTitle = _nullIfBlank(
+            (item['newTitle'] ??
+                    (item['taskQuery'] != null ? item['title'] : null))
+                ?.toString(),
+          );
+          final rawNewCourse = _nullIfBlank(
+            (item['newCourseOrCategory'] ?? item['courseOrCategory'])
+                ?.toString(),
+          );
+          final rawTypeStr = _nullIfBlank(
+            (item['newTaskType'] ?? item['taskType'])?.toString(),
+          );
+          final rawPriorityStr = _nullIfBlank(
+            (item['newPriority'] ?? item['priority'])?.toString(),
+          );
+          final rawNotes = _nullIfBlank(
+            (item['newNotes'] ?? item['notes'])?.toString(),
+          );
+          final rawSubList = (item['addSubtasks'] ??
+                  item['subtasks'] ??
+                  const <dynamic>[]) as List<dynamic>? ??
+              const [];
+          final addSubs = rawSubList
+              .map((e) => e.toString().trim())
+              .where((s) => s.isNotEmpty)
+              .toList();
+          final subtaskTitle = _nullIfBlank(item['subtaskTitle']?.toString());
+
+          parsedActions.add(
+            AiTaskAction(
+              type: actionType,
+              taskId: targetId,
+              taskQuery: query,
+              newDueDate: parsedDue,
+              newDueHour: parsedTime?.$1,
+              newDueMinute: parsedTime?.$2,
+              clearDueTime: clearDueTime,
+              newTitle: rawNewTitle,
+              newCourseOrCategory: rawNewCourse,
+              newTaskType:
+                  rawTypeStr != null ? TaskType.fromString(rawTypeStr) : null,
+              newPriority: rawPriorityStr != null
+                  ? TaskPriority.fromString(rawPriorityStr)
+                  : null,
+              newNotes: rawNotes,
+              addSubtasks: addSubs,
+              subtaskTitle: subtaskTitle,
+            ),
+          );
+        }
+      }
+    } else if (root['tasks'] is List && (root['tasks'] as List).isNotEmpty) {
+      // Legacy fallback if a model returns the older `tasks`-only schema.
+      final legacy = parseJsonResponse(rawText, fallbackDate: fallbackDate);
+      for (final task in legacy.tasks) {
+        parsedActions.add(AiTaskAction(type: AiActionType.add, newTask: task));
+      }
+      if (reply.isEmpty) {
+        reply = legacy.summary;
+      }
+    }
+
+    if (reply.isEmpty && parsedActions.isEmpty) {
+      throw const AiParserException(
+        'Could not understand that command. Try mentioning a task name, date, or action.',
+      );
+    }
+
+    if (reply.isEmpty && parsedActions.isNotEmpty) {
+      reply = 'Updated ${parsedActions.length} task action(s).';
+    }
+
+    return AiAssistantResponse(
+      reply: reply,
+      actions: parsedActions,
+      referencedTaskIds: referencedIds,
+      offTopic: offTopic,
+    );
+  }
+
+  static String? _nullIfBlank(String? raw) {
+    if (raw == null) return null;
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty || trimmed.toLowerCase() == 'null') return null;
+    return trimmed;
+  }
+
+  static DateTime? _tryParseStrictDate(String? raw) {
+    final cleaned = _nullIfBlank(raw);
+    if (cleaned == null) return null;
+    final norm = _normalizeDigits(cleaned);
+    final iso = DateTime.tryParse(norm);
+    if (iso != null) {
+      return DateTime(iso.year, iso.month, iso.day);
+    }
+    final dmyMatch =
+        RegExp(r'^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$').firstMatch(norm);
+    if (dmyMatch != null) {
+      final d = int.tryParse(dmyMatch.group(1)!);
+      final m = int.tryParse(dmyMatch.group(2)!);
+      final y = int.tryParse(dmyMatch.group(3)!);
+      if (d != null && m != null && y != null) {
+        return DateTime(y, m, d);
+      }
+    }
+    return null;
   }
 }

@@ -6,7 +6,8 @@ import '../providers/cloud_sync_provider.dart';
 import '../theme/app_tokens.dart';
 import 'glass_surface.dart';
 
-/// Card for Google Sign-In cloud backup, auto-replace status, and manual backup/restore.
+/// Card for per-user private Google Drive (`appDataFolder`) auto-backup
+/// and portable offline JSON Export/Import.
 class CloudBackupCard extends StatelessWidget {
   const CloudBackupCard({super.key});
 
@@ -51,7 +52,7 @@ class CloudBackupCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Cloud Backup (Google)',
+                      'Private Google Drive',
                       style: textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w700,
                       ),
@@ -59,8 +60,8 @@ class CloudBackupCard extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       cloud.isSignedIn
-                          ? 'Auto-syncs tasks, chats, API keys & settings'
-                          : 'Sign in with Google to back up & restore across devices',
+                          ? 'Auto-syncs to your own Drive appDataFolder on every change'
+                          : 'Back up privately to your own Google Drive (only you have access)',
                       style: textTheme.bodySmall,
                     ),
                   ],
@@ -78,7 +79,7 @@ class CloudBackupCard extends StatelessWidget {
           const SizedBox(height: AppSpacing.md),
           if (!cloud.isAvailable)
             Text(
-              'Cloud backup activates automatically on Android & iOS builds.',
+              'Google Drive auto-sync activates on Android & iOS. Use JSON Export/Import below anytime.',
               style: textTheme.bodySmall,
             )
           else if (!cloud.isSignedIn)
@@ -93,7 +94,7 @@ class CloudBackupCard extends StatelessWidget {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
                               content: Text(
-                                'Signed in and synced with Firebase.',
+                                'Connected and synced with your Google Drive.',
                               ),
                             ),
                           );
@@ -107,7 +108,7 @@ class CloudBackupCard extends StatelessWidget {
                       )
                     : const Icon(Icons.login_rounded, size: 18),
                 label: Text(
-                  cloud.isBusy ? 'Signing in...' : 'Sign in with Google',
+                  cloud.isBusy ? 'Connecting...' : 'Sign in with Google',
                 ),
               ),
             )
@@ -152,7 +153,7 @@ class CloudBackupCard extends StatelessWidget {
                             ),
                           ),
                         Text(
-                          cloud.userEmail ?? 'Signed in',
+                          cloud.userEmail ?? 'Connected',
                           style: textTheme.bodySmall,
                         ),
                         if (cloud.lastSyncedAt != null) ...[
@@ -168,6 +169,33 @@ class CloudBackupCard extends StatelessWidget {
                 ],
               ),
             ),
+            if (cloud.migrationNotice != null) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Container(
+                padding: const EdgeInsets.all(AppSpacing.sm),
+                decoration: BoxDecoration(
+                  color: colors.primarySoft,
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                  border: Border.all(color: colors.glassBorder),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.verified_user_outlined,
+                      size: 16,
+                      color: colors.primary,
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: Text(
+                        cloud.migrationNotice!,
+                        style: textTheme.bodySmall,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: AppSpacing.md),
             Wrap(
               spacing: AppSpacing.sm,
@@ -181,7 +209,9 @@ class CloudBackupCard extends StatelessWidget {
                           if (ok && context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
-                                content: Text('Cloud backup replaced.'),
+                                content: Text(
+                                  'Google Drive backup updated.',
+                                ),
                               ),
                             );
                           }
@@ -204,6 +234,37 @@ class CloudBackupCard extends StatelessWidget {
               ],
             ),
           ],
+          const Divider(height: AppSpacing.xl),
+          Text(
+            'Local Data Export & Import',
+            style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'Save an offline JSON copy of your schedules and chats or restore from any exported file.',
+            style: textTheme.bodySmall?.copyWith(color: colors.textSecondary),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          Wrap(
+            spacing: AppSpacing.sm,
+            runSpacing: AppSpacing.sm,
+            children: [
+              OutlinedButton.icon(
+                onPressed: cloud.isBusy
+                    ? null
+                    : () => _openExportDialog(context, cloud),
+                icon: const Icon(Icons.download_rounded, size: 18),
+                label: const Text('Export JSON'),
+              ),
+              OutlinedButton.icon(
+                onPressed: cloud.isBusy
+                    ? null
+                    : () => _openImportFlow(context, cloud),
+                icon: const Icon(Icons.upload_file_outlined, size: 18),
+                label: const Text('Import JSON'),
+              ),
+            ],
+          ),
           if (cloud.errorMessage != null) ...[
             const SizedBox(height: AppSpacing.sm),
             Row(
@@ -240,12 +301,18 @@ class CloudBackupCard extends StatelessWidget {
     BuildContext context,
     CloudSyncProvider cloud,
   ) async {
+    final colors = context.appColors;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Restore from Firebase?'),
+        backgroundColor: colors.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+          side: BorderSide(color: colors.glassBorder),
+        ),
+        title: const Text('Restore from Google Drive?'),
         content: const Text(
-          'Replace current local tasks, chats, API keys, and reminder settings with your saved cloud backup?',
+          'Replace current local tasks, chats, API keys, and reminder settings with the backup in your private Google Drive?',
         ),
         actions: [
           TextButton(
@@ -261,10 +328,146 @@ class CloudBackupCard extends StatelessWidget {
     );
 
     if (confirmed == true && context.mounted) {
-      final ok = await cloud.restoreFromCloud();
+      final ok = await cloud.restoreFromDrive();
       if (ok && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Restored from Firebase backup.')),
+          const SnackBar(content: Text('Restored from Google Drive.')),
+        );
+      }
+    }
+  }
+
+  Future<void> _openExportDialog(
+    BuildContext context,
+    CloudSyncProvider cloud,
+  ) async {
+    final colors = context.appColors;
+    var includeApiKeys = true;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          backgroundColor: colors.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            side: BorderSide(color: colors.glassBorder),
+          ),
+          title: const Text('Export Backup JSON'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Creates a portable JSON backup file of your tasks, syllabus checklists, chat history, and reminder settings.',
+              ),
+              const SizedBox(height: AppSpacing.md),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                value: includeApiKeys,
+                onChanged: (v) =>
+                    setDialogState(() => includeApiKeys = v ?? true),
+                title: const Text('Include API Keys'),
+                subtitle: const Text(
+                  'Uncheck before sharing this file with someone else',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              icon: const Icon(Icons.share_outlined, size: 18),
+              label: const Text('Export & Share'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await cloud.exportBackupToFile(includeApiKeys: includeApiKeys);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Backup JSON ready.')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Export failed: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _openImportFlow(
+    BuildContext context,
+    CloudSyncProvider cloud,
+  ) async {
+    try {
+      final parsed = await cloud.pickAndParseImportFile();
+      if (parsed == null || !context.mounted) return;
+
+      final colors = context.appColors;
+      final choice = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: colors.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            side: BorderSide(color: colors.glassBorder),
+          ),
+          title: const Text('Import Backup File'),
+          content: Text(
+            'Found ${parsed.payload.tasks.length} tasks and '
+            '${parsed.payload.chatMessages.length} chat messages'
+            '${parsed.includesApiKeys ? ' (includes API keys)' : ' (tasks & chats only)'}.\n\n'
+            'Merge adds missing items without duplicates. Replace overwrites local tasks and chats.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancel'),
+            ),
+            OutlinedButton(
+              onPressed: () => Navigator.of(ctx).pop('replace'),
+              child: const Text('Replace'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop('merge'),
+              child: const Text('Merge'),
+            ),
+          ],
+        ),
+      );
+
+      if (choice == null || !context.mounted) return;
+      await cloud.applyImportedBackup(
+        parsed.payload,
+        merge: choice == 'merge',
+        includesApiKeys: parsed.includesApiKeys,
+      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              choice == 'merge'
+                  ? 'Backup merged without duplicates.'
+                  : 'Backup restored from file.',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Import failed: $e')),
         );
       }
     }
