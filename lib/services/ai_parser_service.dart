@@ -999,6 +999,7 @@ ACTIONS YOU CAN PERFORM:
 - "reschedule": Change due date and/or due time of an existing task. Leave "dueTime" omitted if user only asks to move the date and didn't change the time, or set "clearDueTime": true if user explicitly removes the time.
 - "update": Change "title", "courseOrCategory", "type", "priority", "notes", or append checklist items via "addSubtasks".
 - "complete_subtask" / "uncomplete_subtask": Check or uncheck a syllabus item ("subtaskTitle") inside an existing task.
+- "update_reminder_settings": Only when the user asks to change the global default reminder schedule (defaults are 16:00 day-before & 22:00 due-day) or pause/enable notifications globally. Provide "dayBeforeTime" ("HH:mm"), "endOfDayTime" ("HH:mm"), and/or "remindersEnabled" (true/false). Note: to change a specific task's time, use "reschedule"/"update" instead.
 - Queries ("What is due tomorrow?", "Which tasks are pending?", "কাল কী আছে?"): Set "actions": [], put matching IDs in "referencedTaskIds", and summarize concisely in "reply".
 
 AMBIGUITY SAFETY:
@@ -1015,7 +1016,7 @@ Respond with ONLY a valid JSON object matching this schema:
   "referencedTaskIds": ["existing-task-id"],
   "actions": [
     {
-      "type": "add|complete|uncomplete|delete|reschedule|update|complete_subtask|uncomplete_subtask",
+      "type": "add|complete|uncomplete|delete|reschedule|update|complete_subtask|uncomplete_subtask|update_reminder_settings",
       "taskId": "exact existing id for non-add actions, or null",
       "taskQuery": "task title fallback if needed",
       "subtaskTitle": "subtask name for subtask actions",
@@ -1027,7 +1028,10 @@ Respond with ONLY a valid JSON object matching this schema:
       "taskType": "assignment|classTest|exam|lab|meeting|task",
       "priority": "high|medium|low",
       "notes": "string",
-      "addSubtasks": ["string"]
+      "addSubtasks": ["string"],
+      "dayBeforeTime": "HH:mm (optional, update_reminder_settings only)",
+      "endOfDayTime": "HH:mm (optional, update_reminder_settings only)",
+      "remindersEnabled": true
     }
   ]
 }
@@ -1121,6 +1125,27 @@ For "add" actions you may put title/dueDate/dueTime/courseOrCategory/taskType/pr
           parsedActions.add(
             AiTaskAction(type: AiActionType.add, newTask: newTask),
           );
+        } else if (actionType == AiActionType.updateReminderSettings) {
+          final dayBeforeTime = _parseTime(
+            (item['dayBeforeTime'] ?? item['day_before_time'])?.toString(),
+          );
+          final endOfDayTime = _parseTime(
+            (item['endOfDayTime'] ?? item['end_of_day_time'])?.toString(),
+          );
+          final enabledRaw = item['remindersEnabled'] ?? item['enabled'];
+          final enabledBool = enabledRaw is bool ? enabledRaw : null;
+          if (dayBeforeTime != null ||
+              endOfDayTime != null ||
+              enabledBool != null) {
+            parsedActions.add(
+              AiTaskAction(
+                type: AiActionType.updateReminderSettings,
+                newDayBeforeTime: dayBeforeTime,
+                newEndOfDayTime: endOfDayTime,
+                remindersEnabled: enabledBool,
+              ),
+            );
+          }
         } else {
           final targetId = _nullIfBlank(item['taskId']?.toString());
           final query = _nullIfBlank(

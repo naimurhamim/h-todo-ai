@@ -180,7 +180,7 @@ class _TaskEditorSheetState extends State<TaskEditorSheet> {
                         icon: const Icon(Icons.schedule_rounded, size: 18),
                         label: Text(
                           _dueTime == null
-                              ? 'Optional time'
+                              ? 'Custom reminder time'
                               : _dueTime!.format(context),
                         ),
                       ),
@@ -192,6 +192,11 @@ class _TaskEditorSheetState extends State<TaskEditorSheet> {
                         icon: const Icon(Icons.clear_rounded),
                       ),
                   ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Default alerts fire at 4:00 PM day before & 10:00 PM due day (plus custom time if set).',
+                  style: textTheme.labelSmall,
                 ),
                 const SizedBox(height: AppSpacing.lg),
                 Text('Checklist / Syllabus Topics', style: textTheme.labelLarge),

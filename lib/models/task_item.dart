@@ -172,12 +172,12 @@ class TaskItem {
   }
 
   /// Generates a stable positive notification base ID from an arbitrary task ID.
-  /// Multiplied by 2 when scheduling so each task uses (base*2, base*2 + 1).
+  /// Masked to 28 bits so `base * 3 + 2` always fits within 31-bit Android IDs.
   static int stableBaseIdFromUuid(String id) {
     var hash = 2166136261;
     for (final unit in id.codeUnits) {
       hash ^= unit;
-      hash = (hash * 16777619) & 0x3FFFFFFF;
+      hash = (hash * 16777619) & 0x0FFFFFFF;
     }
     return hash == 0 ? 1 : hash;
   }

@@ -15,6 +15,7 @@ class ScheduledReminder {
     required this.title,
     required this.body,
     required this.isDayBefore,
+    this.isCustomTime = false,
   });
 
   final int id;
@@ -22,10 +23,26 @@ class ScheduledReminder {
   final String title;
   final String body;
   final bool isDayBefore;
+  final bool isCustomTime;
 }
 
 /// Pure, deterministic reminder calculator (testable without platform plugins).
 abstract final class NotificationScheduleCalculator {
+  static DateTime? _effectiveFutureTime(DateTime target, DateTime refNow) {
+    if (target.isAfter(refNow)) return target;
+    final elapsed = refNow.difference(target);
+    if (!elapsed.isNegative &&
+        elapsed.inSeconds < 55 &&
+        target.year == refNow.year &&
+        target.month == refNow.month &&
+        target.day == refNow.day &&
+        target.hour == refNow.hour &&
+        target.minute == refNow.minute) {
+      return refNow.add(const Duration(seconds: 5));
+    }
+    return null;
+  }
+
   static List<ScheduledReminder> compute(
     TaskItem task,
     ReminderSettings settings, {
@@ -36,6 +53,7 @@ abstract final class NotificationScheduleCalculator {
     }
 
     final refNow = now ?? DateTime.now();
+    final safeBase = task.notificationBaseId & 0x0FFFFFFF;
     final dueDay = DateTime(
       task.dueDate.year,
       task.dueDate.month,
@@ -43,7 +61,7 @@ abstract final class NotificationScheduleCalculator {
     );
     final dayBeforeDate = dueDay.subtract(const Duration(days: 1));
 
-    final dayBeforeAt = DateTime(
+    final dayBeforeTarget = DateTime(
       dayBeforeDate.year,
       dayBeforeDate.month,
       dayBeforeDate.day,
@@ -51,7 +69,7 @@ abstract final class NotificationScheduleCalculator {
       settings.dayBeforeMinute,
     );
 
-    final endOfDayAt = DateTime(
+    final endOfDayTarget = DateTime(
       dueDay.year,
       dueDay.month,
       dueDay.day,
@@ -68,11 +86,12 @@ abstract final class NotificationScheduleCalculator {
 
     final reminders = <ScheduledReminder>[];
 
-    if (dayBeforeAt.isAfter(refNow)) {
+    final effectiveDayBefore = _effectiveFutureTime(dayBeforeTarget, refNow);
+    if (effectiveDayBefore != null) {
       reminders.add(
         ScheduledReminder(
-          id: task.notificationBaseId * 2,
-          scheduledAt: dayBeforeAt,
+          id: safeBase * 3,
+          scheduledAt: effectiveDayBefore,
           title: 'Upcoming tomorrow: ${task.title}',
           body: '${coursePrefix}Due tomorrow$dueTimeSuffix.',
           isDayBefore: true,
@@ -80,11 +99,37 @@ abstract final class NotificationScheduleCalculator {
       );
     }
 
-    if (endOfDayAt.isAfter(refNow)) {
+    if (task.hasDueTime &&
+        (task.dueHour != settings.endOfDayHour ||
+            task.dueMinute != settings.endOfDayMinute)) {
+      final taskTimeTarget = DateTime(
+        dueDay.year,
+        dueDay.month,
+        dueDay.day,
+        task.dueHour!,
+        task.dueMinute!,
+      );
+      final effectiveTaskTime = _effectiveFutureTime(taskTimeTarget, refNow);
+      if (effectiveTaskTime != null) {
+        reminders.add(
+          ScheduledReminder(
+            id: safeBase * 3 + 2,
+            scheduledAt: effectiveTaskTime,
+            title: 'Reminder: ${task.title}',
+            body: '${coursePrefix}Scheduled for ${task.formattedDueTime}.',
+            isDayBefore: false,
+            isCustomTime: true,
+          ),
+        );
+      }
+    }
+
+    final effectiveEndOfDay = _effectiveFutureTime(endOfDayTarget, refNow);
+    if (effectiveEndOfDay != null) {
       reminders.add(
         ScheduledReminder(
-          id: task.notificationBaseId * 2 + 1,
-          scheduledAt: endOfDayAt,
+          id: safeBase * 3 + 1,
+          scheduledAt: effectiveEndOfDay,
           title: 'Mark task complete: ${task.title}',
           body:
               '${coursePrefix}End-of-day check-in — tap to cross off if done.',
@@ -97,20 +142,23 @@ abstract final class NotificationScheduleCalculator {
   }
 }
 
-/// Coordinates local notifications for day-before & end-of-day reminders.
+/// Coordinates exact Android/iOS local notifications for day-before, custom task time, and end-of-day reminders.
 class NotificationService {
   NotificationService({
     FlutterLocalNotificationsPlugin? plugin,
   }) : _plugin = plugin ?? FlutterLocalNotificationsPlugin();
 
-  static const _channelId = 'htodo_reminders';
+  static const _channelId = 'htodo_reminders_v2';
   static const _channelName = 'Schedule Reminders';
   static const _channelDescription =
-      'Day-before alerts and end-of-day completion check-ins';
+      'Day-before alerts, task deadline alerts, and end-of-day check-ins';
+  static const int _testScheduledId = 999998;
+  static const int _testInstantId = 999999;
 
   final FlutterLocalNotificationsPlugin _plugin;
   bool _initialized = false;
   bool _tzInitialized = false;
+  bool _platformReady = false;
 
   bool get _supportsPlatformScheduling {
     if (kIsWeb) return false;
@@ -144,14 +192,30 @@ class NotificationService {
       );
 
       await _plugin.initialize(settings);
+      _platformReady = true;
 
       if (defaultTargetPlatform == TargetPlatform.android) {
         final androidImpl = _plugin.resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>();
+        await androidImpl?.createNotificationChannel(
+          const AndroidNotificationChannel(
+            _channelId,
+            _channelName,
+            description: _channelDescription,
+            importance: Importance.max,
+            playSound: true,
+            enableVibration: true,
+          ),
+        );
         await androidImpl?.requestNotificationsPermission();
+        final canExact = await androidImpl?.canScheduleExactNotifications();
+        if (canExact == false) {
+          await androidImpl?.requestExactAlarmsPermission();
+        }
       }
-    } catch (_) {
-      // Ignore plugin startup issues on headless/unsupported runners.
+    } catch (e) {
+      _platformReady = false;
+      debugPrint('NotificationService.init warning: $e');
     }
 
     _initialized = true;
@@ -188,12 +252,70 @@ class NotificationService {
         _channelId,
         _channelName,
         channelDescription: _channelDescription,
-        importance: Importance.high,
-        priority: Priority.high,
+        importance: Importance.max,
+        priority: Priority.max,
+        playSound: true,
+        enableVibration: true,
       ),
       iOS: DarwinNotificationDetails(),
       macOS: DarwinNotificationDetails(),
     );
+  }
+
+  Future<AndroidScheduleMode> _resolveScheduleMode() async {
+    if (defaultTargetPlatform != TargetPlatform.android) {
+      return AndroidScheduleMode.alarmClock;
+    }
+    try {
+      final androidImpl = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      if (androidImpl == null) return AndroidScheduleMode.alarmClock;
+      var canExact = await androidImpl.canScheduleExactNotifications();
+      if (canExact != true) {
+        await androidImpl.requestExactAlarmsPermission();
+        canExact = await androidImpl.canScheduleExactNotifications();
+      }
+      if (canExact == true) {
+        return AndroidScheduleMode.alarmClock;
+      }
+    } catch (_) {}
+    return AndroidScheduleMode.inexactAllowWhileIdle;
+  }
+
+  Future<void> _zonedScheduleWithFallback({
+    required int id,
+    required String title,
+    required String body,
+    required tz.TZDateTime tzDate,
+    required AndroidScheduleMode preferredMode,
+    String? payload,
+  }) async {
+    final modes = <AndroidScheduleMode>[
+      preferredMode,
+      if (preferredMode != AndroidScheduleMode.exactAllowWhileIdle)
+        AndroidScheduleMode.exactAllowWhileIdle,
+      if (preferredMode != AndroidScheduleMode.inexactAllowWhileIdle)
+        AndroidScheduleMode.inexactAllowWhileIdle,
+    ];
+
+    for (final mode in modes) {
+      try {
+        await _plugin.zonedSchedule(
+          id,
+          title,
+          body,
+          tzDate,
+          _notificationDetails(),
+          uiLocalNotificationDateInterpretation:
+              UILocalNotificationDateInterpretation.absoluteTime,
+          androidScheduleMode: mode,
+          payload: payload,
+        );
+        return;
+      } catch (e) {
+        debugPrint('zonedSchedule failed for mode $mode (id=$id): $e');
+      }
+    }
   }
 
   Future<void> scheduleForTask(
@@ -203,38 +325,40 @@ class NotificationService {
     await init();
     await cancelForTask(task);
 
-    if (!_supportsPlatformScheduling) return;
+    if (!_supportsPlatformScheduling || !_platformReady) return;
 
     final reminders = NotificationScheduleCalculator.compute(task, settings);
     if (reminders.isEmpty) return;
 
+    final mode = await _resolveScheduleMode();
     for (final r in reminders) {
-      try {
-        final tzDate = tz.TZDateTime.from(r.scheduledAt, tz.local);
-        await _plugin.zonedSchedule(
-          r.id,
-          r.title,
-          r.body,
-          tzDate,
-          _notificationDetails(),
-          uiLocalNotificationDateInterpretation:
-              UILocalNotificationDateInterpretation.absoluteTime,
-          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-          payload: task.id,
-        );
-      } catch (_) {
-        // Safely continue if OS denies exact/background scheduling.
-      }
+      final tzDate = tz.TZDateTime.from(r.scheduledAt, tz.local);
+      await _zonedScheduleWithFallback(
+        id: r.id,
+        title: r.title,
+        body: r.body,
+        tzDate: tzDate,
+        preferredMode: mode,
+        payload: task.id,
+      );
     }
   }
 
   Future<void> cancelForTask(TaskItem task) async {
-    if (!_supportsPlatformScheduling) return;
-    try {
-      await _plugin.cancel(task.notificationBaseId * 2);
-      await _plugin.cancel(task.notificationBaseId * 2 + 1);
-    } catch (_) {
-      // Safely ignore in headless or unsupported environments.
+    if (!_supportsPlatformScheduling || !_platformReady) return;
+    final safeBase = task.notificationBaseId & 0x0FFFFFFF;
+    final legacyBase = task.notificationBaseId;
+    final idsToCancel = <int>{
+      safeBase * 3,
+      safeBase * 3 + 1,
+      safeBase * 3 + 2,
+      legacyBase * 2,
+      legacyBase * 2 + 1,
+    };
+    for (final id in idsToCancel) {
+      try {
+        await _plugin.cancel(id);
+      } catch (_) {}
     }
   }
 
@@ -243,7 +367,7 @@ class NotificationService {
     ReminderSettings settings,
   ) async {
     await init();
-    if (!_supportsPlatformScheduling) return;
+    if (!_supportsPlatformScheduling || !_platformReady) return;
 
     try {
       await _plugin.cancelAll();
@@ -260,17 +384,31 @@ class NotificationService {
 
   Future<String> showTestNotification() async {
     await init();
-    if (!_supportsPlatformScheduling) {
+    if (!_supportsPlatformScheduling || !_platformReady) {
       return 'Reminders are scheduled on Android/iOS devices (not supported in this desktop/web preview).';
     }
     try {
       await _plugin.show(
-        999999,
+        _testInstantId,
         'H-TODO AI Reminder Active',
-        'You will be notified the day before and at end-of-day for each task.',
+        'Immediate test alert — a timed exact alarm will also fire in 10 seconds.',
         _notificationDetails(),
       );
-      return 'Test notification sent.';
+
+      final mode = await _resolveScheduleMode();
+      final scheduledAt =
+          tz.TZDateTime.now(tz.local).add(const Duration(seconds: 10));
+      await _zonedScheduleWithFallback(
+        id: _testScheduledId,
+        title: 'H-TODO AI Timed Alarm Test',
+        body: 'Exact background alarm verified — task reminders are working.',
+        tzDate: scheduledAt,
+        preferredMode: mode,
+      );
+
+      final pending = await _plugin.pendingNotificationRequests();
+      final count = pending.length;
+      return 'Test alert sent + 10s scheduled alarm queued ($count active alarm${count == 1 ? '' : 's'} on device).';
     } catch (e) {
       return 'Could not show notification: $e';
     }

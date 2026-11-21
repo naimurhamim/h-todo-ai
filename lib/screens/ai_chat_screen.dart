@@ -87,6 +87,20 @@ class _AiChatScreenState extends State<AiChatScreen> {
       onModelResolved: (newModel) => aiSettings.updateProviderConfig(
         activeProvider.copyWith(model: newModel),
       ),
+      onReminderSettingsAction: (action) async {
+        final cur = aiSettings.reminderSettings;
+        final next = cur.copyWith(
+          enabled: action.remindersEnabled ?? cur.enabled,
+          dayBeforeHour: action.newDayBeforeTime?.$1 ?? cur.dayBeforeHour,
+          dayBeforeMinute: action.newDayBeforeTime?.$2 ?? cur.dayBeforeMinute,
+          endOfDayHour: action.newEndOfDayTime?.$1 ?? cur.endOfDayHour,
+          endOfDayMinute: action.newEndOfDayTime?.$2 ?? cur.endOfDayMinute,
+        );
+        await aiSettings.updateReminderSettings(
+          next,
+          onReschedule: taskProvider.rescheduleAllNotifications,
+        );
+      },
     );
 
     if (deletedTasks.isNotEmpty && mounted) {

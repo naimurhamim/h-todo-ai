@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
+import '../models/ai_chat_action.dart';
 import '../models/ai_provider_config.dart';
 import '../models/chat_message.dart';
 import '../models/task_item.dart';
@@ -45,6 +46,7 @@ class ChatProvider extends ChangeNotifier {
     required AiProviderConfig activeProvider,
     required TaskProvider taskProvider,
     Future<void> Function(String newModel)? onModelResolved,
+    Future<void> Function(AiTaskAction action)? onReminderSettingsAction,
   }) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty || _isSending) return const [];
@@ -91,7 +93,18 @@ class ChatProvider extends ChangeNotifier {
         await onModelResolved?.call(result.resolvedModel!);
       }
 
-      final exec = await taskProvider.executeAiActions(result.actions);
+      final reminderActions = result.actions
+          .where((a) => a.type == AiActionType.updateReminderSettings)
+          .toList();
+      final taskActions = result.actions
+          .where((a) => a.type != AiActionType.updateReminderSettings)
+          .toList();
+
+      for (final remAction in reminderActions) {
+        await onReminderSettingsAction?.call(remAction);
+      }
+
+      final exec = await taskProvider.executeAiActions(taskActions);
       deletedTasks = exec.deletedTasks;
 
       final linkedIds = <String>[

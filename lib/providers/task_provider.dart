@@ -134,6 +134,8 @@ class TaskProvider extends ChangeNotifier {
   Future<void> load() async {
     _tasks = await _storage.loadTasks();
     _loaded = true;
+    final settings = await _storage.loadReminderSettings();
+    await _notifications.rescheduleAll(_tasks, settings);
     notifyListeners();
   }
 
@@ -300,6 +302,7 @@ class TaskProvider extends ChangeNotifier {
 
       switch (action.type) {
         case AiActionType.add:
+        case AiActionType.updateReminderSettings:
           break;
         case AiActionType.complete:
           if (!current.isCompleted) {

@@ -295,7 +295,7 @@ class NotificationsSheet extends StatelessWidget {
                                           const SizedBox(width: 4),
                                           Expanded(
                                             child: Text(
-                                              '${alert.isDayBefore ? 'Day before' : 'Due day'}: ${DateFormat('EEE, d MMM • h:mm a').format(alert.scheduledAt)}',
+                                              '${alert.isCustomTime ? 'Task alert' : (alert.isDayBefore ? 'Day before' : 'Due day')}: ${DateFormat('EEE, d MMM • h:mm a').format(alert.scheduledAt)}',
                                               style: textTheme.labelSmall
                                                   ?.copyWith(
                                                 color: colors.textSecondary,

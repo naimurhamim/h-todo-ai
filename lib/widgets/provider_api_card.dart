@@ -180,11 +180,39 @@ class _ProviderApiCardState extends State<ProviderApiCard> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      widget.config.displayName,
-                      style: textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
+                    Wrap(
+                      spacing: AppSpacing.xs,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          widget.config.displayName,
+                          style: textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        if (widget.config.id == AiProviderType.groq)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: colors.primarySoft,
+                              borderRadius: BorderRadius.circular(AppRadius.pill),
+                              border: Border.all(
+                                color: colors.primary.withValues(alpha: 0.4),
+                              ),
+                            ),
+                            child: Text(
+                              'Recommended • Fast',
+                              style: textTheme.labelSmall?.copyWith(
+                                color: colors.primary,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                     const SizedBox(height: 2),
                     Text(

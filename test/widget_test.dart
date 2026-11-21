@@ -132,13 +132,15 @@ void main() {
     await tester.tap(find.text('AI API Keys'));
     await tester.pumpAndSettle();
 
-    // Verify dedicated ApiKeysScreen opened with Back button.
+    // Verify dedicated ApiKeysScreen opened with Back button & API Key Guidebook.
     expect(find.bySemanticsLabel('Back'), findsOneWidget);
+    expect(find.text('API Key Guidebook'), findsOneWidget);
 
     await tester.ensureVisible(find.text('Google Gemini (Free)'));
     expect(find.text('Google Gemini (Free)'), findsOneWidget);
     await tester.ensureVisible(find.text('Groq (Free)'));
     expect(find.text('Groq (Free)'), findsOneWidget);
+    expect(find.text('Recommended • Fast'), findsOneWidget);
     await tester.ensureVisible(find.text('xAI Grok'));
     expect(find.text('xAI Grok'), findsOneWidget);
     await tester.ensureVisible(find.text('OpenRouter (Free)'));

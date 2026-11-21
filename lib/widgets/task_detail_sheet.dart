@@ -180,6 +180,17 @@ class TaskDetailSheet extends StatelessWidget {
                           color: colors.textPrimary,
                         ),
                       ),
+                      if (task.hasDueTime &&
+                          (task.dueHour != settings.endOfDayHour ||
+                              task.dueMinute != settings.endOfDayMinute)) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          'Custom task alert: $dueDayLabel at ${task.formattedDueTime}',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: colors.textPrimary,
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 4),
                       Text(
                         'End-of-day check-in: $dueDayLabel at ${ReminderSettings.formatHourMinute(settings.endOfDayHour, settings.endOfDayMinute)}',

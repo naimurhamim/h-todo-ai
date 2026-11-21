@@ -118,6 +118,36 @@ void main() {
       expect(res.actions.single.newTask?.title, 'Final Viva');
       expect(res.reply, 'Added Viva.');
     });
+
+    test('parses update_reminder_settings actions from natural language', () {
+      const raw = '''
+{
+  "reply": "Updated default reminders to 5:30 PM day before and 9:00 PM due day.",
+  "offTopic": false,
+  "referencedTaskIds": [],
+  "actions": [
+    {
+      "type": "update_reminder_settings",
+      "dayBeforeTime": "17:30",
+      "endOfDayTime": "21:00",
+      "remindersEnabled": true
+    }
+  ]
+}
+''';
+
+      final res = AiParserService.parseAssistantResponse(
+        raw,
+        fallbackDate: DateTime(2026, 11, 21),
+      );
+
+      expect(res.actions, hasLength(1));
+      final action = res.actions.single;
+      expect(action.type, AiActionType.updateReminderSettings);
+      expect(action.newDayBeforeTime, (17, 30));
+      expect(action.newEndOfDayTime, (21, 0));
+      expect(action.remindersEnabled, isTrue);
+    });
   });
 
   group('TaskProvider.executeAiActions & Undo', () {

@@ -11,7 +11,8 @@ enum AiActionType {
   reschedule,
   update,
   completeSubtask,
-  uncompleteSubtask;
+  uncompleteSubtask,
+  updateReminderSettings;
 
   static AiActionType? fromString(String? raw) {
     final normalized = (raw ?? '')
@@ -57,6 +58,11 @@ enum AiActionType {
       case 'subtaskundone':
       case 'unchecksubtask':
         return AiActionType.uncompleteSubtask;
+      case 'updateremindersettings':
+      case 'remindersettings':
+      case 'setremindertime':
+      case 'changereminder':
+        return AiActionType.updateReminderSettings;
       default:
         return null;
     }
@@ -82,6 +88,9 @@ class AiTaskAction {
     this.newNotes,
     this.addSubtasks = const [],
     this.subtaskTitle,
+    this.newDayBeforeTime,
+    this.newEndOfDayTime,
+    this.remindersEnabled,
   });
 
   final AiActionType type;
@@ -99,6 +108,9 @@ class AiTaskAction {
   final String? newNotes;
   final List<String> addSubtasks;
   final String? subtaskTitle;
+  final (int, int)? newDayBeforeTime;
+  final (int, int)? newEndOfDayTime;
+  final bool? remindersEnabled;
 }
 
 /// Complete multilingual response from the focused H-TODO AI assistant.
