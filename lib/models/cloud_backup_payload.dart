@@ -98,8 +98,41 @@ class CloudBackupPayload {
     );
   }
 
+  static List<SubTaskItem> _mergeMissingSubtasks(
+    List<SubTaskItem> base,
+    List<SubTaskItem> extra,
+  ) {
+    if (extra.isEmpty) return base;
+    final seenIds = base.map((s) => s.id).where((id) => id.isNotEmpty).toSet();
+    final seenTitles = base
+        .map((s) => s.title.toLowerCase().trim())
+        .where((t) => t.isNotEmpty)
+        .toSet();
+    final additions = <SubTaskItem>[];
+    for (final s in extra) {
+      final normTitle = s.title.toLowerCase().trim();
+      final dupId = s.id.isNotEmpty && seenIds.contains(s.id);
+      final dupTitle = normTitle.isNotEmpty && seenTitles.contains(normTitle);
+      if (dupId || dupTitle) continue;
+      if (s.id.isNotEmpty) seenIds.add(s.id);
+      if (normTitle.isNotEmpty) seenTitles.add(normTitle);
+      additions.add(s);
+    }
+    return additions.isEmpty ? base : [...base, ...additions];
+  }
+
+  static bool _isDefaultReminderSettings(ReminderSettings s) =>
+      s.enabled == true &&
+      s.dayBeforeHour == 16 &&
+      s.dayBeforeMinute == 0 &&
+      s.endOfDayHour == 22 &&
+      s.endOfDayMinute == 0 &&
+      s.themeMode == 'system';
+
   /// Merges this cloud snapshot with [local] on initial login so neither device loses data.
   CloudBackupPayload mergeWithLocal(CloudBackupPayload local) {
+    final cloudIsNewer = updatedAt.isAfter(local.updatedAt);
+
     final taskById = <String, TaskItem>{
       for (final t in local.tasks) t.id: t,
     };
@@ -110,11 +143,30 @@ class CloudBackupPayload {
       } else {
         final localComp = existing.completedAt;
         final cloudComp = cloudTask.completedAt;
-        if (localComp != null &&
-            (cloudComp == null || localComp.isAfter(cloudComp))) {
+        if (localComp != null && cloudComp != null) {
+          taskById[cloudTask.id] =
+              localComp.isAfter(cloudComp) ? existing : cloudTask;
+        } else if (localComp != null) {
           taskById[cloudTask.id] = existing;
-        } else {
+        } else if (cloudComp != null) {
           taskById[cloudTask.id] = cloudTask;
+        } else if (!cloudIsNewer) {
+          final mergedSubs = _mergeMissingSubtasks(
+            existing.subtasks,
+            cloudTask.subtasks,
+          );
+          taskById[cloudTask.id] = existing.copyWith(subtasks: mergedSubs);
+        } else {
+          final mergedSubs = _mergeMissingSubtasks(
+            cloudTask.subtasks,
+            existing.subtasks,
+          );
+          final preserveTime = !cloudTask.hasDueTime && existing.hasDueTime;
+          taskById[cloudTask.id] = cloudTask.copyWith(
+            dueHour: preserveTime ? existing.dueHour : cloudTask.dueHour,
+            dueMinute: preserveTime ? existing.dueMinute : cloudTask.dueMinute,
+            subtasks: mergedSubs,
+          );
         }
       }
     }
@@ -131,7 +183,6 @@ class CloudBackupPayload {
     final mergedProviders = Map<AiProviderType, AiProviderConfig>.from(
       AiProviderConfig.defaults(),
     );
-    final cloudIsNewer = updatedAt.isAfter(local.updatedAt);
 
     for (final type in AiProviderType.values) {
       final cloudCfg = providers[type] ?? mergedProviders[type]!;
@@ -147,9 +198,24 @@ class CloudBackupPayload {
       }
     }
 
-    final hasCloudKeys = providers.values.any((p) => p.hasKey);
     final useCloudMeta =
-        !isMeaningfullyEmpty && (cloudIsNewer || hasCloudKeys);
+        !isMeaningfullyEmpty && (local.isMeaningfullyEmpty || cloudIsNewer);
+
+    var resolvedActiveProvider =
+        useCloudMeta ? activeProviderType : local.activeProviderType;
+    if (!(mergedProviders[resolvedActiveProvider]?.hasKey ?? false) &&
+        (mergedProviders[activeProviderType]?.hasKey ?? false)) {
+      resolvedActiveProvider = activeProviderType;
+    }
+
+    final localHasCustomReminder =
+        !_isDefaultReminderSettings(local.reminderSettings);
+    final cloudIsDefaultReminder =
+        _isDefaultReminderSettings(reminderSettings);
+    final resolvedReminderSettings =
+        useCloudMeta && !(localHasCustomReminder && cloudIsDefaultReminder)
+            ? reminderSettings
+            : local.reminderSettings;
 
     final dedupedBySignature = <String, TaskItem>{};
     for (final task in taskById.values) {
@@ -178,12 +244,9 @@ class CloudBackupPayload {
     return CloudBackupPayload(
       schemaVersion: schemaVersion,
       updatedAt: DateTime.now(),
-      activeProviderType: useCloudMeta
-          ? activeProviderType
-          : local.activeProviderType,
+      activeProviderType: resolvedActiveProvider,
       providers: mergedProviders,
-      reminderSettings:
-          useCloudMeta ? reminderSettings : local.reminderSettings,
+      reminderSettings: resolvedReminderSettings,
       tasks: dedupedBySignature.values.toList(),
       chatMessages: mergedMessages,
     );

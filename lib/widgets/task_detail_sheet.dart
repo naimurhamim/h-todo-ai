@@ -180,9 +180,7 @@ class TaskDetailSheet extends StatelessWidget {
                           color: colors.textPrimary,
                         ),
                       ),
-                      if (task.hasDueTime &&
-                          (task.dueHour != settings.endOfDayHour ||
-                              task.dueMinute != settings.endOfDayMinute)) ...[
+                      if (task.hasDueTime) ...[
                         const SizedBox(height: 4),
                         Text(
                           'Custom task alert: $dueDayLabel at ${task.formattedDueTime}',

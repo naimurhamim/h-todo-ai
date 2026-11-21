@@ -3,7 +3,9 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
+import '../models/reminder_settings.dart';
 import '../models/task_item.dart';
+import '../providers/ai_settings_provider.dart';
 import '../providers/task_provider.dart';
 import '../theme/app_tokens.dart';
 import 'glass_surface.dart';
@@ -78,6 +80,15 @@ class _TaskEditorSheetState extends State<TaskEditorSheet> {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    final reminder = context.watch<AiSettingsProvider>().reminderSettings;
+    final dayBeforeStr = ReminderSettings.formatHourMinute(
+      reminder.dayBeforeHour,
+      reminder.dayBeforeMinute,
+    );
+    final endOfDayStr = ReminderSettings.formatHourMinute(
+      reminder.endOfDayHour,
+      reminder.endOfDayMinute,
+    );
     final isEditing = widget.existing != null;
 
     return Padding(
@@ -195,7 +206,9 @@ class _TaskEditorSheetState extends State<TaskEditorSheet> {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'Default alerts fire at 4:00 PM day before & 10:00 PM due day (plus custom time if set).',
+                  reminder.enabled
+                      ? 'Default alerts fire at $dayBeforeStr day before & $endOfDayStr due day (plus custom time if set).'
+                      : 'Notifications are paused in Profile -> Reminders.',
                   style: textTheme.labelSmall,
                 ),
                 const SizedBox(height: AppSpacing.lg),

@@ -20,11 +20,24 @@ class StorageService {
   static const _reminderSettingsKey = 'htodo_reminder_settings_v1';
   static const _securitySettingsKey = 'htodo_security_v1';
   static const _googleProfileKey = 'htodo_google_profile_v1';
+  static const _lastUpdatedAtKey = 'htodo_last_updated_at_v1';
 
   SharedPreferences? _prefs;
 
   Future<SharedPreferences> _instance() async {
     return _prefs ??= await SharedPreferences.getInstance();
+  }
+
+  Future<DateTime?> loadLastUpdatedAt() async {
+    final prefs = await _instance();
+    final raw = prefs.getString(_lastUpdatedAtKey);
+    if (raw == null || raw.isEmpty) return null;
+    return DateTime.tryParse(raw);
+  }
+
+  Future<void> saveLastUpdatedAt(DateTime timestamp) async {
+    final prefs = await _instance();
+    await prefs.setString(_lastUpdatedAtKey, timestamp.toIso8601String());
   }
 
   Future<List<TaskItem>> loadTasks() async {
@@ -46,6 +59,7 @@ class StorageService {
     final prefs = await _instance();
     final encoded = jsonEncode(tasks.map((t) => t.toJson()).toList());
     await prefs.setString(_tasksKey, encoded);
+    await prefs.setString(_lastUpdatedAtKey, DateTime.now().toIso8601String());
   }
 
   Future<List<ChatMessage>> loadChatMessages() async {
@@ -67,6 +81,7 @@ class StorageService {
     final prefs = await _instance();
     final encoded = jsonEncode(messages.map((m) => m.toJson()).toList());
     await prefs.setString(_chatKey, encoded);
+    await prefs.setString(_lastUpdatedAtKey, DateTime.now().toIso8601String());
   }
 
   Future<Map<AiProviderType, AiProviderConfig>> loadProviders() async {
@@ -100,6 +115,7 @@ class StorageService {
       for (final entry in providers.entries) entry.key.name: entry.value.toJson(),
     };
     await prefs.setString(_providersKey, jsonEncode(map));
+    await prefs.setString(_lastUpdatedAtKey, DateTime.now().toIso8601String());
   }
 
   Future<AiProviderType> loadActiveProviderType() async {
@@ -111,6 +127,7 @@ class StorageService {
   Future<void> saveActiveProviderType(AiProviderType type) async {
     final prefs = await _instance();
     await prefs.setString(_activeProviderKey, type.name);
+    await prefs.setString(_lastUpdatedAtKey, DateTime.now().toIso8601String());
   }
 
   Future<ReminderSettings> loadReminderSettings() async {
@@ -128,6 +145,7 @@ class StorageService {
   Future<void> saveReminderSettings(ReminderSettings settings) async {
     final prefs = await _instance();
     await prefs.setString(_reminderSettingsKey, jsonEncode(settings.toJson()));
+    await prefs.setString(_lastUpdatedAtKey, DateTime.now().toIso8601String());
   }
 
   Future<SecuritySettings> loadSecuritySettings() async {

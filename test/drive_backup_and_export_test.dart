@@ -319,5 +319,136 @@ void main() {
         'local-user-key',
       );
     });
+
+    test(
+        'mergeWithLocal preserves newer local reminderSettings and custom task time even when cloud has API keys',
+        () {
+      final providersWithKey = Map<AiProviderType, AiProviderConfig>.from(
+        AiProviderConfig.defaults(),
+      );
+      providersWithKey[AiProviderType.groq] =
+          providersWithKey[AiProviderType.groq]!
+              .copyWith(apiKey: 'gsk-cloud-key');
+
+      final olderCloud = CloudBackupPayload(
+        updatedAt: DateTime(2026, 11, 21, 18, 0),
+        activeProviderType: AiProviderType.gemini,
+        providers: providersWithKey,
+        reminderSettings: const ReminderSettings(),
+        tasks: [
+          TaskItem(
+            id: 'shared-task-1',
+            notificationBaseId: 500,
+            title: 'Class Test',
+            dueDate: DateTime(2026, 11, 22),
+            dueHour: null,
+            dueMinute: null,
+            createdAt: DateTime(2026, 11, 20),
+          ),
+        ],
+        chatMessages: const [],
+      );
+
+      final newerLocal = CloudBackupPayload(
+        updatedAt: DateTime(2026, 11, 21, 19, 30),
+        activeProviderType: AiProviderType.groq,
+        providers: providersWithKey,
+        reminderSettings: const ReminderSettings(
+          dayBeforeHour: 19,
+          dayBeforeMinute: 45,
+          endOfDayHour: 23,
+          endOfDayMinute: 15,
+        ),
+        tasks: [
+          TaskItem(
+            id: 'shared-task-1',
+            notificationBaseId: 500,
+            title: 'Class Test',
+            dueDate: DateTime(2026, 11, 22),
+            dueHour: 19,
+            dueMinute: 50,
+            notes: 'Bring calculator',
+            createdAt: DateTime(2026, 11, 20),
+          ),
+        ],
+        chatMessages: const [],
+      );
+
+      final merged = olderCloud.mergeWithLocal(newerLocal);
+      expect(merged.activeProviderType, AiProviderType.groq);
+      expect(merged.reminderSettings.dayBeforeHour, 19);
+      expect(merged.reminderSettings.dayBeforeMinute, 45);
+      expect(merged.reminderSettings.endOfDayHour, 23);
+      expect(merged.reminderSettings.endOfDayMinute, 15);
+      expect(merged.tasks, hasLength(1));
+      expect(merged.tasks.first.dueHour, 19);
+      expect(merged.tasks.first.dueMinute, 50);
+      expect(merged.tasks.first.notes, 'Bring calculator');
+    });
+
+    test(
+        'mergeWithLocal preserves custom local reminderSettings over default cloud reminderSettings even if cloud is newer',
+        () {
+      final providersWithKey = Map<AiProviderType, AiProviderConfig>.from(
+        AiProviderConfig.defaults(),
+      );
+      providersWithKey[AiProviderType.groq] =
+          providersWithKey[AiProviderType.groq]!
+              .copyWith(apiKey: 'gsk-cloud-key');
+
+      final newerCloudWithDefaults = CloudBackupPayload(
+        updatedAt: DateTime(2026, 11, 21, 20, 0),
+        activeProviderType: AiProviderType.groq,
+        providers: providersWithKey,
+        reminderSettings: const ReminderSettings(),
+        tasks: const [],
+        chatMessages: const [],
+      );
+
+      final localCustomized = CloudBackupPayload(
+        updatedAt: DateTime(2026, 11, 21, 18, 0),
+        activeProviderType: AiProviderType.groq,
+        providers: providersWithKey,
+        reminderSettings: const ReminderSettings(
+          dayBeforeHour: 17,
+          dayBeforeMinute: 15,
+          endOfDayHour: 21,
+          endOfDayMinute: 45,
+        ),
+        tasks: [
+          TaskItem(
+            id: 'local-only',
+            notificationBaseId: 510,
+            title: 'Quiz',
+            dueDate: DateTime(2026, 11, 22),
+            createdAt: DateTime(2026, 11, 21),
+          ),
+        ],
+        chatMessages: const [],
+      );
+
+      final merged = newerCloudWithDefaults.mergeWithLocal(localCustomized);
+      expect(merged.reminderSettings.dayBeforeHour, 17);
+      expect(merged.reminderSettings.dayBeforeMinute, 15);
+      expect(merged.reminderSettings.endOfDayHour, 21);
+      expect(merged.reminderSettings.endOfDayMinute, 45);
+    });
+
+    test('StorageService persists lastUpdatedAt when saving reminder settings',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      final storage = StorageService();
+      expect(await storage.loadLastUpdatedAt(), isNull);
+
+      await storage.saveReminderSettings(
+        const ReminderSettings(dayBeforeHour: 18, dayBeforeMinute: 30),
+      );
+      final recorded = await storage.loadLastUpdatedAt();
+      expect(recorded, isNotNull);
+
+      final customTs = DateTime(2026, 11, 21, 12, 0);
+      await storage.saveLastUpdatedAt(customTs);
+      expect(await storage.loadLastUpdatedAt(), customTs);
+    });
   });
 }

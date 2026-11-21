@@ -48,6 +48,7 @@ class CloudSyncProvider extends ChangeNotifier {
   bool _suppressAutoSync = false;
   bool _uploadInFlight = false;
   bool _queuedUpload = false;
+  DateTime _lastLocalUpdatedAt = DateTime.fromMillisecondsSinceEpoch(0);
   String? _lastSyncedFingerprint;
   String? _errorMessage;
   String? _migrationNotice;
@@ -66,10 +67,19 @@ class CloudSyncProvider extends ChangeNotifier {
 
   Future<void> _initSession() async {
     _profile = await _storage.loadGoogleProfile();
+    if (_lastLocalUpdatedAt.millisecondsSinceEpoch == 0) {
+      _lastLocalUpdatedAt =
+          (await _storage.loadLastUpdatedAt()) ?? _lastLocalUpdatedAt;
+    }
     notifyListeners();
 
     if (!_service.isAvailable) return;
     await _waitForLocalLoads();
+
+    if (_lastLocalUpdatedAt.millisecondsSinceEpoch == 0) {
+      _lastLocalUpdatedAt =
+          (await _storage.loadLastUpdatedAt()) ?? _lastLocalUpdatedAt;
+    }
 
     final live = await _service.restoreSilentSession();
     if (live == null) return;
@@ -108,8 +118,15 @@ class CloudSyncProvider extends ChangeNotifier {
   }
 
   CloudBackupPayload _buildCurrentPayload() {
+    final hasLocalData = _tasks.tasks.isNotEmpty ||
+        _chat.messages.isNotEmpty ||
+        _aiSettings.providers.values.any((p) => p.hasKey);
+    final updatedAt =
+        _lastLocalUpdatedAt.millisecondsSinceEpoch == 0 && hasLocalData
+            ? DateTime.now()
+            : _lastLocalUpdatedAt;
     return CloudBackupPayload(
-      updatedAt: DateTime.now(),
+      updatedAt: updatedAt,
       activeProviderType: _aiSettings.activeProviderType,
       providers: _aiSettings.providers,
       reminderSettings: _aiSettings.reminderSettings,
@@ -131,6 +148,8 @@ class CloudSyncProvider extends ChangeNotifier {
         payload.reminderSettings,
       );
       await _chat.applyRestoredState(payload.chatMessages);
+      _lastLocalUpdatedAt = payload.updatedAt;
+      await _storage.saveLastUpdatedAt(_lastLocalUpdatedAt);
     } finally {
       _suppressAutoSync = false;
     }
@@ -287,7 +306,9 @@ class CloudSyncProvider extends ChangeNotifier {
   /// Debounces and replaces the single `htodo_ai_backup.json` file in the user's
   /// own Drive `appDataFolder` whenever local data changes.
   void scheduleAutoBackup() {
-    if (!isAvailable || _profile == null || _suppressAutoSync) return;
+    if (_suppressAutoSync) return;
+    _lastLocalUpdatedAt = DateTime.now();
+    if (!isAvailable || _profile == null) return;
     _debounceTimer?.cancel();
     _debounceTimer = Timer(const Duration(milliseconds: 800), () {
       unawaited(_runSingleUpload(silent: true, promptIfNecessary: false));
