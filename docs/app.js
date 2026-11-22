@@ -60,6 +60,7 @@
       downloadApkBtn: 'Download Android APK',
       releaseNotesBtn: 'Release Notes',
       sourceRepoBtn: 'GitHub Source',
+      latestReleasePill: 'Latest Release',
       quickStepsHeading: '3-Step Quick Start',
       qs1Title: 'Install the APK',
       qs1Body: 'Download the release APK above and allow app installation on your Android device.',
@@ -127,6 +128,7 @@
       downloadApkBtn: 'অ্যান্ড্রয়েড APK ডাউনলোড',
       releaseNotesBtn: 'রিলিজ নোটস',
       sourceRepoBtn: 'GitHub সোর্স',
+      latestReleasePill: 'সর্বশেষ রিলিজ',
       quickStepsHeading: '৩ ধাপে দ্রুত শুরু করুন',
       qs1Title: 'APK ইনস্টল করুন',
       qs1Body: 'ওপরের বাটন থেকে APK ডাউনলোড করে আপনার অ্যান্ড্রয়েড ফোনে ইনস্টল করুন।',
@@ -149,10 +151,10 @@
         side: 'right',
         anchor: 'ov-top-actions',
         where: { en: 'Top Bar Controls', bn: 'টপ বার কন্ট্রোল' },
-        title: { en: 'Theme Toggle & Read-Only Bell', bn: 'থিম সুইচ ও রিড-অনলি বেল' },
+        title: { en: 'Theme Toggle & Today Bell', bn: 'থিম সুইচ ও Today/Tomorrow বেল' },
         body: {
-          en: 'Instant Light/Dark Glass switcher paired with a live upcoming Notifications drawer that clears completed tasks automatically.',
-          bn: 'এক ক্লিকে লাইট/ডার্ক গ্লাস থিম বদলান; সাথে বেল আইকনে আসন্ন ও ওভারডিউ কাজের রিড-অনলি তালিকা (কমপ্লিট করলে অটো সরে যায়)।'
+          en: 'Instant Light/Dark Glass switcher paired with a bell badge counting only Today\'s remaining tasks, opening separate read-only Today & Tomorrow panels.',
+          bn: 'এক ক্লিকে লাইট/ডার্ক গ্লাস থিম বদলান; বেল ব্যাজে শুধু আজকের বাকি টাস্ক সংখ্যা দেখায় এবং ক্লিক করলে Today ও Tomorrow আলাদা প্যানেল খোলে।'
         }
       },
       {
@@ -343,6 +345,7 @@
     planMode: 'week', // 'week' | 'timeline'
     planCompletedOnly: false,
     notifOpen: false,
+    notifTab: 'today',
     undoBanner: null, // { textEn, textBn, onUndo }
     toastMsg: null,
     toastTimer: null,
@@ -613,24 +616,43 @@
     }
 
     if (state.notifOpen && state.tab === 0) {
-      const pending = state.tasks.filter((t) => !t.done);
+      const todayPending = state.tasks.filter((t) => !t.done && t.dayIdx === 2);
+      const tomorrowPending = state.tasks.filter((t) => !t.done && t.dayIdx === 3);
+      const list = state.notifTab === 'tomorrow' ? tomorrowPending : todayPending;
+      const emptyMsg =
+        state.notifTab === 'tomorrow'
+          ? state.lang === 'bn'
+            ? 'আগামীকালের জন্য কোনো পেন্ডিং কাজ নেই।'
+            : 'No pending tasks scheduled for tomorrow.'
+          : state.lang === 'bn'
+          ? 'আজকের সব কাজ শেষ!'
+          : 'All caught up for today!';
+
       html += `
-        <div class="phone-notif-drawer" role="dialog" aria-label="Upcoming Notifications">
+        <div class="phone-notif-drawer" role="dialog" aria-label="Notifications">
           <div class="notif-drawer-head">
-            <strong>${state.lang === 'bn' ? 'আসন্ন নোটিফিকেশন' : 'Upcoming Notifications'} (${pending.length})</strong>
+            <strong>${state.lang === 'bn' ? 'নোটিফিকেশন' : 'Notifications'}</strong>
             <button type="button" class="undo-pill-btn is-ok" id="close-notif-drawer">${state.lang === 'bn' ? 'বন্ধ' : 'Close'}</button>
           </div>
           <p class="notif-drawer-note">
             ${
               state.lang === 'bn'
-                ? 'রিড-অনলি প্যানেল: টাস্ক কমপ্লিট করলেই অটো মুছে যায়।'
-                : 'Read-only panel: tasks disappear automatically when completed.'
+                ? 'বেল ব্যাজ শুধু আজকের বাকি কাজ গণে; কমপ্লিট করলেই সরে যায়।'
+                : 'Badge counts Today only; tasks clear automatically when completed.'
             }
           </p>
+          <div class="notif-tabs" role="tablist">
+            <button type="button" class="notif-tab-btn${state.notifTab === 'today' ? ' is-active' : ''}" data-notif-tab="today">
+              ${state.lang === 'bn' ? 'আজ' : 'Today'} (${todayPending.length})
+            </button>
+            <button type="button" class="notif-tab-btn${state.notifTab === 'tomorrow' ? ' is-active' : ''}" data-notif-tab="tomorrow">
+              ${state.lang === 'bn' ? 'আগামীকাল' : 'Tomorrow'} (${tomorrowPending.length})
+            </button>
+          </div>
           ${
-            pending.length === 0
-              ? `<div class="notif-row">${state.lang === 'bn' ? 'সব কাজ শেষ!' : 'All caught up!'}</div>`
-              : pending
+            list.length === 0
+              ? `<div class="notif-row">${emptyMsg}</div>`
+              : list
                   .slice(0, 4)
                   .map(
                     (t) => `
@@ -647,6 +669,13 @@
     }
 
     phoneOverlay.innerHTML = html;
+
+    phoneOverlay.querySelectorAll('[data-notif-tab]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.notifTab = btn.getAttribute('data-notif-tab');
+        renderOverlay();
+      });
+    });
 
     const undoBtn = document.getElementById('sim-undo-btn');
     if (undoBtn && state.undoBanner) {
@@ -708,7 +737,7 @@
     const circ = 2 * Math.PI * 27;
     const dashOffset = circ - (pct / 100) * circ;
     const nextTask = state.tasks.find((t) => !t.done);
-    const pendingCount = state.tasks.filter((t) => !t.done).length;
+    const todayPendingCount = state.tasks.filter((t) => !t.done && t.dayIdx === 2).length;
 
     const visibleTasks = (dayTasks.length ? dayTasks : state.tasks).filter((t) => {
       if (state.overviewFilter === 'done') return t.done;
@@ -736,7 +765,7 @@
               <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
               <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
             </svg>
-            <span class="bell-badge">${pendingCount}</span>
+            ${todayPendingCount > 0 ? `<span class="bell-badge">${todayPendingCount}</span>` : ''}
           </button>
         </div>
       </div>
@@ -961,7 +990,7 @@
     return `
       <div class="app-topbar">
         <h3 class="app-screen-title">Profile</h3>
-        <span class="version-pill" data-release-tag>v1.0.8</span>
+        <span class="version-pill">Offline-First</span>
       </div>
 
       <div class="app-card app-card-elevated" data-anchor="pr-drive">
@@ -1176,6 +1205,7 @@
     if (bellBtn) {
       bellBtn.addEventListener('click', () => {
         state.notifOpen = !state.notifOpen;
+        if (state.notifOpen) state.notifTab = 'today';
         renderOverlay();
       });
     }
@@ -1417,7 +1447,7 @@
     arrowRaf = requestAnimationFrame(drawArrows);
   }
 
-  // GitHub Latest Release Fetch (with graceful fallback to v1.0.8)
+  // GitHub Latest Release Fetch (wires latest APK asset & release metadata dynamically)
   async function loadLatestRelease() {
     try {
       const res = await fetch(GITHUB_LATEST_API, {
@@ -1425,10 +1455,6 @@
       });
       if (!res.ok) return;
       const data = await res.json();
-      const tag = data.tag_name || 'v1.0.8';
-      document.querySelectorAll('[data-release-tag]').forEach((el) => {
-        el.textContent = tag;
-      });
 
       const apkAsset = Array.isArray(data.assets)
         ? data.assets.find((a) => a.name && a.name.toLowerCase().endsWith('.apk'))

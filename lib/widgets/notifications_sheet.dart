@@ -10,8 +10,8 @@ import '../theme/app_tokens.dart';
 import 'glass_surface.dart';
 import 'task_card.dart';
 
-/// Frosted read-only notifications modal showing upcoming deadlines, remaining days, and alert times.
-class NotificationsSheet extends StatelessWidget {
+/// Frosted read-only notifications modal with separate Today and Tomorrow panels.
+class NotificationsSheet extends StatefulWidget {
   const NotificationsSheet({super.key});
 
   static Future<void> show(BuildContext context) {
@@ -22,6 +22,13 @@ class NotificationsSheet extends StatelessWidget {
       builder: (_) => const NotificationsSheet(),
     );
   }
+
+  @override
+  State<NotificationsSheet> createState() => _NotificationsSheetState();
+}
+
+class _NotificationsSheetState extends State<NotificationsSheet> {
+  int _selectedPanel = 0; // 0 = Today, 1 = Tomorrow
 
   DateTime _effectiveDue(TaskItem task) {
     return DateTime(
@@ -42,12 +49,6 @@ class NotificationsSheet extends StatelessWidget {
     );
     final dayDiff = dueDay.difference(today).inDays;
 
-    if (dayDiff < 0) {
-      final overdueDays = -dayDiff;
-      return overdueDays == 1
-          ? 'Overdue by 1 day'
-          : 'Overdue by $overdueDays days';
-    }
     if (dayDiff == 0) {
       final dueAt = _effectiveDue(task);
       final diff = dueAt.difference(now);
@@ -69,7 +70,7 @@ class NotificationsSheet extends StatelessWidget {
           ? 'Due tomorrow • ${task.formattedDueTime}'
           : 'Due tomorrow';
     }
-    return 'Due in $dayDiff days (${DateFormat('EEE, d MMM').format(task.dueDate)})';
+    return DateFormat('EEE, d MMM').format(task.dueDate);
   }
 
   @override
@@ -80,17 +81,33 @@ class NotificationsSheet extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
     final now = DateTime.now();
 
-    final pending = taskProvider.tasks.where((t) => !t.isCompleted).toList()
-      ..sort((a, b) => _effectiveDue(a).compareTo(_effectiveDue(b)));
-
     final todayOnly = DateTime(now.year, now.month, now.day);
-    final cutoffDay = todayOnly.add(const Duration(days: 30));
-    final nearTerm = pending.where((t) {
-      final dueDay = DateTime(t.dueDate.year, t.dueDate.month, t.dueDate.day);
-      return !dueDay.isAfter(cutoffDay);
-    }).toList();
-    final visible = nearTerm.take(50).toList();
-    final hiddenCount = pending.length - visible.length;
+    final tomorrowOnly = todayOnly.add(const Duration(days: 1));
+
+    final todayTasks = <TaskItem>[];
+    final tomorrowTasks = <TaskItem>[];
+
+    for (final task in taskProvider.tasks) {
+      if (task.isCompleted) continue;
+      final dueDay = DateTime(
+        task.dueDate.year,
+        task.dueDate.month,
+        task.dueDate.day,
+      );
+      if (dueDay == todayOnly) {
+        todayTasks.add(task);
+      } else if (dueDay == tomorrowOnly) {
+        tomorrowTasks.add(task);
+      }
+    }
+
+    todayTasks.sort((a, b) => _effectiveDue(a).compareTo(_effectiveDue(b)));
+    tomorrowTasks.sort((a, b) => _effectiveDue(a).compareTo(_effectiveDue(b)));
+
+    final visibleTasks = _selectedPanel == 0 ? todayTasks : tomorrowTasks;
+    final subtitleText = reminder.enabled
+        ? '${todayTasks.length} left today • ${tomorrowTasks.length} tomorrow'
+        : 'Reminders paused • ${todayTasks.length} left today';
 
     return ConstrainedBox(
       constraints: BoxConstraints(
@@ -135,9 +152,7 @@ class NotificationsSheet extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        reminder.enabled
-                            ? '${pending.length} upcoming • Next 99 alarms active'
-                            : '${pending.length} upcoming • Reminders paused',
+                        subtitleText,
                         style: textTheme.bodySmall?.copyWith(
                           color: colors.textSecondary,
                         ),
@@ -156,7 +171,31 @@ class NotificationsSheet extends StatelessWidget {
               ],
             ),
             const SizedBox(height: AppSpacing.md),
-            if (pending.isEmpty)
+            GlassContainer(
+              borderRadius: AppRadius.pill,
+              blur: 0,
+              padding: const EdgeInsets.all(4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _NotifPanelTab(
+                      label: 'Today (${todayTasks.length})',
+                      selected: _selectedPanel == 0,
+                      onTap: () => setState(() => _selectedPanel = 0),
+                    ),
+                  ),
+                  Expanded(
+                    child: _NotifPanelTab(
+                      label: 'Tomorrow (${tomorrowTasks.length})',
+                      selected: _selectedPanel == 1,
+                      onTap: () => setState(() => _selectedPanel = 1),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            if (visibleTasks.isEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: AppSpacing.xxl),
                 child: Column(
@@ -168,14 +207,18 @@ class NotificationsSheet extends StatelessWidget {
                     ),
                     const SizedBox(height: AppSpacing.sm),
                     Text(
-                      'All caught up',
+                      _selectedPanel == 0
+                          ? 'All caught up'
+                          : 'Nothing for tomorrow',
                       style: textTheme.titleSmall?.copyWith(
                         fontWeight: FontWeight.w700,
                       ),
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'No upcoming deadlines or pending reminders right now.',
+                      _selectedPanel == 0
+                          ? 'No pending tasks left for today.'
+                          : 'No pending tasks scheduled for tomorrow.',
                       textAlign: TextAlign.center,
                       style: textTheme.bodySmall?.copyWith(
                         color: colors.textSecondary,
@@ -188,44 +231,21 @@ class NotificationsSheet extends StatelessWidget {
               Flexible(
                 child: ListView.separated(
                   shrinkWrap: true,
-                  itemCount: visible.length + (hiddenCount > 0 ? 1 : 0),
+                  itemCount: visibleTasks.length,
                   separatorBuilder: (_, _) =>
                       const SizedBox(height: AppSpacing.sm),
                   itemBuilder: (context, index) {
-                    if (index >= visible.length) {
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(
-                          vertical: AppSpacing.sm,
-                        ),
-                        child: Text(
-                          '+ $hiddenCount more tasks scheduled for later dates',
-                          textAlign: TextAlign.center,
-                          style: textTheme.bodySmall?.copyWith(
-                            color: colors.textSecondary,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      );
-                    }
-
-                    final task = visible[index];
+                    final task = visibleTasks[index];
                     final alerts = NotificationScheduleCalculator.compute(
                       task,
                       reminder,
                       now: now,
                     );
-                    final dueDayOnly = DateTime(
-                      task.dueDate.year,
-                      task.dueDate.month,
-                      task.dueDate.day,
-                    );
-                    final isOverdue = dueDayOnly.isBefore(todayOnly);
 
                     return GlassContainer(
                       borderRadius: AppRadius.lg,
                       blur: 0,
-                      borderColor:
-                          isOverdue ? colors.danger : colors.glassBorder,
+                      borderColor: colors.glassBorder,
                       padding: const EdgeInsets.all(AppSpacing.md),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -270,9 +290,7 @@ class NotificationsSheet extends StatelessWidget {
                                 Text(
                                   _countdownText(task, now),
                                   style: textTheme.labelMedium?.copyWith(
-                                    color: isOverdue
-                                        ? colors.danger
-                                        : colors.primary,
+                                    color: colors.primary,
                                     fontWeight: FontWeight.w700,
                                   ),
                                 ),
@@ -313,6 +331,48 @@ class NotificationsSheet extends StatelessWidget {
                 ),
               ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NotifPanelTab extends StatelessWidget {
+  const _NotifPanelTab({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.appColors;
+    return Material(
+      type: MaterialType.transparency,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppRadius.pill),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppRadius.pill),
+            color: selected ? colors.primary : Colors.transparent,
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: selected ? colors.onPrimary : colors.textSecondary,
+            ),
+          ),
         ),
       ),
     );

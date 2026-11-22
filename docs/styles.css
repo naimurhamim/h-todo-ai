@@ -897,6 +897,34 @@ html[data-theme="light"] .icon-sun {
   margin: 0 0 8px;
 }
 
+.notif-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  margin-bottom: 10px;
+}
+
+.notif-tab-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 5px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 0.71rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+}
+
+.notif-tab-btn.is-active {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
 .notif-row {
   padding: 8px 10px;
   border-radius: var(--radius-md);

@@ -154,7 +154,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
                   GlassCircleButton(
                     icon: Icons.notifications_none_rounded,
                     tooltip: 'Notifications',
-                    badgeCount: taskProvider.pendingCount,
+                    badgeCount: taskProvider.dueTodayCount,
                     size: 42,
                     onTap: () => NotificationsSheet.show(context),
                   ),

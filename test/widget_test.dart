@@ -230,10 +230,21 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     final now = DateTime.now();
-    final tomorrow = DateTime(now.year, now.month, now.day).add(
-      const Duration(days: 1),
+    final today = DateTime(now.year, now.month, now.day);
+    final tomorrow = today.add(const Duration(days: 1));
+    final threeDaysLater = today.add(const Duration(days: 3));
+    final todayTask = TaskItem(
+      id: 't-notif-today',
+      notificationBaseId: 504,
+      title: 'Today Quiz 01',
+      courseOrCategory: 'EEE 201',
+      type: TaskType.classTest,
+      dueDate: today,
+      dueHour: 23,
+      dueMinute: 59,
+      createdAt: now,
     );
-    final pendingTask = TaskItem(
+    final tomorrowTask = TaskItem(
       id: 't-notif-1',
       notificationBaseId: 505,
       title: 'Class Test 01',
@@ -242,6 +253,17 @@ void main() {
       dueDate: tomorrow,
       dueHour: 10,
       dueMinute: 30,
+      createdAt: now,
+    );
+    final futureTask = TaskItem(
+      id: 't-notif-later',
+      notificationBaseId: 506,
+      title: 'Later Exam 01',
+      courseOrCategory: 'CSE 405',
+      type: TaskType.exam,
+      dueDate: threeDaysLater,
+      dueHour: 14,
+      dueMinute: 0,
       createdAt: now,
     );
     final olderMsg = ChatMessage(
@@ -259,7 +281,11 @@ void main() {
     );
 
     SharedPreferences.setMockInitialValues({
-      'htodo_tasks_v1': jsonEncode([pendingTask.toJson()]),
+      'htodo_tasks_v1': jsonEncode([
+        todayTask.toJson(),
+        tomorrowTask.toJson(),
+        futureTask.toJson(),
+      ]),
       'htodo_chat_v1': jsonEncode([olderMsg.toJson(), newerMsg.toJson()]),
     });
 
@@ -274,6 +300,13 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // Bell badge strictly counts only Today's remaining tasks (not Tomorrow or later).
+    final bellFinder = find.byTooltip('Notifications');
+    expect(
+      find.descendant(of: bellFinder, matching: find.text('1')),
+      findsOneWidget,
+    );
+
     // Overview Theme Toggle beside Notification Bell.
     final toDarkBtn = find.byTooltip('Switch to Dark theme');
     expect(toDarkBtn, findsOneWidget);
@@ -281,17 +314,32 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byTooltip('Switch to Light theme'), findsOneWidget);
 
-    // Tapping Notifications bell opens NotificationsSheet instead of Plan Your Day.
-    await tester.tap(find.byTooltip('Notifications'));
+    // Tapping Notifications bell opens NotificationsSheet with Today & Tomorrow panels.
+    await tester.tap(bellFinder);
     await tester.pumpAndSettle();
     expect(find.text('Notifications'), findsOneWidget);
     expect(find.text('Plan Your Day'), findsNothing);
-    expect(find.text('Class Test 01'), findsWidgets);
+    expect(find.text('Today (1)'), findsOneWidget);
+    expect(find.text('Tomorrow (1)'), findsOneWidget);
 
     final sheetFinder = find.byType(NotificationsSheet);
     expect(sheetFinder, findsOneWidget);
 
-    // Tapping left icon or notification card stays read-only (does not complete, edit, or delete).
+    // Today panel displays Today's task only (no Tomorrow or future tasks).
+    expect(
+      find.descendant(of: sheetFinder, matching: find.text('Today Quiz 01')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: sheetFinder, matching: find.text('Class Test 01')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: sheetFinder, matching: find.text('Later Exam 01')),
+      findsNothing,
+    );
+
+    // Tapping left icon or card on Today panel stays read-only.
     await tester.tap(
       find
           .descendant(
@@ -303,30 +351,37 @@ void main() {
     await tester.pumpAndSettle();
     expect(sheetFinder, findsOneWidget);
     expect(find.byType(TaskDetailSheet), findsNothing);
-    expect(
-      find.descendant(of: sheetFinder, matching: find.text('Class Test 01')),
-      findsOneWidget,
-    );
-
     await tester.tap(
-      find.descendant(of: sheetFinder, matching: find.text('Class Test 01')),
+      find.descendant(of: sheetFinder, matching: find.text('Today Quiz 01')),
     );
     await tester.pumpAndSettle();
     expect(sheetFinder, findsOneWidget);
     expect(find.byType(TaskDetailSheet), findsNothing);
+
+    // Switch to Tomorrow panel: displays Tomorrow's task only.
+    await tester.tap(find.text('Tomorrow (1)'));
+    await tester.pumpAndSettle();
     expect(
       find.descendant(of: sheetFinder, matching: find.text('Class Test 01')),
       findsOneWidget,
     );
+    expect(
+      find.descendant(of: sheetFinder, matching: find.text('Today Quiz 01')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: sheetFinder, matching: find.text('Later Exam 01')),
+      findsNothing,
+    );
 
-    // Completing task externally auto-removes it from NotificationsSheet; uncompleting restores it.
+    // Completing Tomorrow task auto-removes it from Tomorrow panel; uncompleting restores it.
     final taskProvider = Provider.of<TaskProvider>(
       tester.element(sheetFinder),
       listen: false,
     );
     await taskProvider.toggleTaskComplete('t-notif-1');
     await tester.pumpAndSettle();
-    expect(find.text('All caught up'), findsOneWidget);
+    expect(find.text('Nothing for tomorrow'), findsOneWidget);
     expect(
       find.descendant(of: sheetFinder, matching: find.text('Class Test 01')),
       findsNothing,
@@ -336,6 +391,24 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       find.descendant(of: sheetFinder, matching: find.text('Class Test 01')),
+      findsOneWidget,
+    );
+
+    // Switch back to Today panel and test live completion removal + bell count update.
+    await tester.tap(find.text('Today (1)'));
+    await tester.pumpAndSettle();
+    await taskProvider.toggleTaskComplete('t-notif-today');
+    await tester.pumpAndSettle();
+    expect(find.text('All caught up'), findsOneWidget);
+    expect(
+      find.descendant(of: sheetFinder, matching: find.text('Today Quiz 01')),
+      findsNothing,
+    );
+
+    await taskProvider.toggleTaskComplete('t-notif-today');
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(of: sheetFinder, matching: find.text('Today Quiz 01')),
       findsOneWidget,
     );
 
