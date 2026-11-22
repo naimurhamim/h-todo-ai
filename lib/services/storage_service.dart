@@ -21,6 +21,8 @@ class StorageService {
   static const _securitySettingsKey = 'htodo_security_v1';
   static const _googleProfileKey = 'htodo_google_profile_v1';
   static const _lastUpdatedAtKey = 'htodo_last_updated_at_v1';
+  static const _deletedTaskIdsKey = 'htodo_deleted_task_ids_v1';
+  static const int _maxDeletedTombstones = 1000;
 
   SharedPreferences? _prefs;
 
@@ -38,6 +40,45 @@ class StorageService {
   Future<void> saveLastUpdatedAt(DateTime timestamp) async {
     final prefs = await _instance();
     await prefs.setString(_lastUpdatedAtKey, timestamp.toIso8601String());
+  }
+
+  Future<List<String>> loadDeletedTaskIds() async {
+    final prefs = await _instance();
+    return List<String>.from(prefs.getStringList(_deletedTaskIdsKey) ?? const []);
+  }
+
+  Future<void> saveDeletedTaskIds(List<String> ids) async {
+    final prefs = await _instance();
+    final trimmed = _trimDeletedIds(ids);
+    await prefs.setStringList(_deletedTaskIdsKey, trimmed);
+  }
+
+  Future<void> recordDeletedTaskIds(Iterable<String> ids) async {
+    final incoming = ids.map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+    if (incoming.isEmpty) return;
+    final current = await loadDeletedTaskIds();
+    await saveDeletedTaskIds([...current, ...incoming]);
+  }
+
+  Future<void> removeDeletedTaskIds(Iterable<String> ids) async {
+    final toRemove = ids.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet();
+    if (toRemove.isEmpty) return;
+    final current = await loadDeletedTaskIds();
+    await saveDeletedTaskIds(
+      current.where((id) => !toRemove.contains(id)).toList(),
+    );
+  }
+
+  static List<String> _trimDeletedIds(List<String> ids) {
+    final seen = <String>{};
+    final reversed = <String>[];
+    for (final raw in ids.reversed) {
+      final id = raw.trim();
+      if (id.isEmpty || !seen.add(id)) continue;
+      reversed.add(id);
+      if (reversed.length >= _maxDeletedTombstones) break;
+    }
+    return reversed.reversed.toList();
   }
 
   Future<List<TaskItem>> loadTasks() async {

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -133,6 +135,13 @@ class _EntryGateState extends State<_EntryGate> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (!mounted) return;
     context.read<SecurityProvider>().handleAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      unawaited(
+        context.read<TaskProvider>().refreshRollingNotifications(
+              context.read<AiSettingsProvider>().reminderSettings,
+            ),
+      );
+    }
   }
 
   @override

@@ -593,7 +593,9 @@ class _ChatBubble extends StatelessWidget {
               ),
               if (createdTasks.isNotEmpty) ...[
                 const SizedBox(height: AppSpacing.md),
-                for (var i = 0; i < createdTasks.length; i++) ...[
+                for (var i = 0;
+                    i < (createdTasks.length > 5 ? 5 : createdTasks.length);
+                    i++) ...[
                   if (i > 0) const SizedBox(height: AppSpacing.sm),
                   TaskCard(
                     task: createdTasks[i],
@@ -602,6 +604,16 @@ class _ChatBubble extends StatelessWidget {
                         taskProvider.toggleTaskComplete(createdTasks[i].id),
                     onTap: () =>
                         TaskDetailSheet.show(context, createdTasks[i].id),
+                  ),
+                ],
+                if (createdTasks.length > 5) ...[
+                  const SizedBox(height: AppSpacing.sm),
+                  Text(
+                    '+ ${createdTasks.length - 5} more tasks in Plan',
+                    style: textTheme.labelSmall?.copyWith(
+                      color: colors.primary,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ],
               ],

@@ -228,4 +228,65 @@ void main() {
       expect(reminders[1].scheduledAt, DateTime(2026, 11, 25, 22, 0));
     });
   });
+
+  group('NotificationScheduleCalculator.computeRollingWindow', () {
+    test(
+        'caps active alarms at 99, prioritizes soonest alerts including urgent tomorrow task, and rolls forward',
+        () {
+      // Create 120 daily tasks with default reminders (= 240 potential alarms).
+      final baseDay = DateTime(2026, 11, 22);
+      final tasks = List.generate(120, (i) {
+        final d = DateTime(baseDay.year, baseDay.month, baseDay.day + i + 2);
+        return TaskItem(
+          id: 'series-$i',
+          notificationBaseId: 1000 + i,
+          title: 'Daily Habit #$i',
+          dueDate: d,
+          createdAt: baseDay,
+        );
+      });
+
+      // Add an urgent task for tomorrow morning AFTER the series list.
+      final urgentTomorrow = TaskItem(
+        id: 'urgent-ct',
+        notificationBaseId: 9999,
+        title: 'Urgent Class Test',
+        dueDate: DateTime(2026, 11, 23),
+        dueHour: 8,
+        dueMinute: 30,
+        createdAt: baseDay,
+      );
+      final allTasks = [...tasks, urgentTomorrow];
+
+      final windowNow = NotificationScheduleCalculator.computeRollingWindow(
+        allTasks,
+        const ReminderSettings(),
+        now: DateTime(2026, 11, 22, 18, 0),
+      );
+
+      expect(windowNow, hasLength(99));
+      expect(windowNow.first.taskId, 'urgent-ct');
+      expect(
+        windowNow.first.reminder.scheduledAt,
+        DateTime(2026, 11, 23, 8, 30),
+      );
+      expect(
+        windowNow.any((e) => e.taskId == 'series-119'),
+        isFalse,
+      );
+
+      // Roll clock forward 75 days: old tasks pass out, tail tasks (series-119) roll in!
+      final windowLater = NotificationScheduleCalculator.computeRollingWindow(
+        allTasks,
+        const ReminderSettings(),
+        now: DateTime(2027, 2, 5, 10, 0),
+      );
+      expect(windowLater, isNotEmpty);
+      expect(windowLater.length, lessThanOrEqualTo(99));
+      expect(
+        windowLater.any((e) => e.taskId == 'series-119'),
+        isTrue,
+      );
+    });
+  });
 }

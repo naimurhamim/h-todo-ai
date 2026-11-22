@@ -938,25 +938,68 @@ Respond with ONLY a valid JSON object (no markdown fences, no commentary) matchi
   }) {
     final today = DateFormat('yyyy-MM-dd (EEEE), HH:mm').format(now);
 
-    final pendingFirst = [
-      ...existingTasks.where((t) => !t.isCompleted),
-      ...existingTasks.where((t) => t.isCompleted).take(12),
-    ].take(50).toList();
+    final seriesGroups = <String, List<TaskItem>>{};
+    final standaloneTasks = <TaskItem>[];
+    for (final t in existingTasks) {
+      final sid = t.seriesId?.trim();
+      if (sid != null && sid.isNotEmpty) {
+        seriesGroups.putIfAbsent(sid, () => []).add(t);
+      } else {
+        standaloneTasks.add(t);
+      }
+    }
 
-    final tasksBlock = pendingFirst.isEmpty
-        ? 'No saved tasks yet.'
-        : pendingFirst.map((t) {
-            final subs = t.subtasks.isEmpty
-                ? 'none'
-                : t.subtasks
-                    .map((s) => '${s.isCompleted ? "[x]" : "[ ]"} ${s.title}')
-                    .join('; ');
-            final dueTime = t.formattedDueTime ?? 'none';
-            return '- id=${t.id} | status=${t.isCompleted ? "DONE" : "PENDING"} | '
-                'title="${t.title}" | course="${t.courseOrCategory}" | '
-                'type=${t.type.name} | due=${t.dateKey} $dueTime | '
-                'priority=${t.priority.name} | subtasks=[$subs]';
-          }).join('\n');
+    final seriesLines = <String>[];
+    for (final entry in seriesGroups.entries) {
+      if (entry.value.length < 2) {
+        standaloneTasks.addAll(entry.value);
+        continue;
+      }
+      final group = List<TaskItem>.from(entry.value)
+        ..sort((a, b) => a.dateKey.compareTo(b.dateKey));
+      final first = group.first;
+      final last = group.last;
+      final pendingCount = group.where((t) => !t.isCompleted).length;
+      final doneCount = group.length - pendingCount;
+      final timesSet = group
+          .where((t) => t.hasDueTime)
+          .map(
+            (t) =>
+                '${t.dueHour!.toString().padLeft(2, '0')}:${t.dueMinute!.toString().padLeft(2, '0')}',
+          )
+          .toSet()
+          .toList()
+        ..sort();
+      final timesLabel = timesSet.isEmpty ? 'default' : timesSet.join(', ');
+      seriesLines.add(
+        '- SERIES seriesId=${entry.key} | title="${first.title}" | '
+        'course="${first.courseOrCategory}" | type=${first.type.name} | '
+        'times=[$timesLabel] | pending=$pendingCount done=$doneCount | '
+        'dates=${first.dateKey}..${last.dateKey}',
+      );
+    }
+
+    final pendingFirst = [
+      ...standaloneTasks.where((t) => !t.isCompleted),
+      ...standaloneTasks.where((t) => t.isCompleted).take(10),
+    ].take(40).toList();
+
+    final standaloneLines = pendingFirst.map((t) {
+      final subs = t.subtasks.isEmpty
+          ? 'none'
+          : t.subtasks
+              .map((s) => '${s.isCompleted ? "[x]" : "[ ]"} ${s.title}')
+              .join('; ');
+      final dueTime = t.formattedDueTime ?? 'none';
+      return '- id=${t.id} | status=${t.isCompleted ? "DONE" : "PENDING"} | '
+          'title="${t.title}" | course="${t.courseOrCategory}" | '
+          'type=${t.type.name} | due=${t.dateKey} $dueTime | '
+          'priority=${t.priority.name} | subtasks=[$subs]';
+    }).toList();
+
+    final allLines = [...seriesLines, ...standaloneLines];
+    final tasksBlock =
+        allLines.isEmpty ? 'No saved tasks yet.' : allLines.join('\n');
 
     final historyList =
         recentMessages.where((m) => !m.isError).toList();
@@ -992,21 +1035,22 @@ MULTILINGUAL RULES:
 - Convert all dates to "YYYY-MM-DD" and times to 24-hour "HH:mm" (or null).
 
 ACTIONS YOU CAN PERFORM:
-- "add": Create new task(s) from schedules/notices or user commands. If an identical existing task already exists on the same date/time and the user is repeating a notice, reuse its exact title & courseOrCategory so duplicate protection can merge updates cleanly.
-- "complete": Mark an existing task completed.
-- "uncomplete": Reopen a completed task as pending.
-- "delete": Remove/delete an existing task.
-- "reschedule": Change due date and/or due time of an existing task. Leave "dueTime" omitted if user only asks to move the date and didn't change the time, or set "clearDueTime": true if user explicitly removes the time.
-- "update": Change "title", "courseOrCategory", "type", "priority", "notes", or append checklist items via "addSubtasks".
+- "add": Create 1 to 5 individual non-repeating tasks from notices or commands. If an identical existing task already exists on the same date/time and the user is repeating a notice, reuse its exact title & courseOrCategory so duplicate protection can merge updates cleanly.
+- "add_recurring": ALWAYS use 1 single "add_recurring" action (NEVER emit >5 individual "add" actions) for ANY repeating, daily, every-N-days, weekly, or monthly schedule (e.g., next 40 days, next 1 year, twice a day, every Mon/Wed/Fri, 1st of every month). Set "title", "courseOrCategory", "taskType", "priority", "notes", "addSubtasks", "frequency" ("daily"|"every_n_days"|"weekly"|"monthly"), "interval" (default 1), "startDate" ("YYYY-MM-DD"), "endDate" (optional), "durationDays" (optional int, e.g. 40), "durationMonths" (optional int, e.g. 6 or 12 for 1 year), "maxOccurrences" (optional int), "weekdays" (optional [1..7], 1=Mon..7=Sun), "dayOfMonth" (optional 1..31), "times" (array of 24h "HH:mm", e.g. ["08:00", "20:00"], or [] for default alerts).
+- "complete" / "uncomplete": Mark a single existing task completed or pending.
+- "delete": Remove/delete a single existing task.
+- "reschedule": Change due date and/or due time of a single existing task. Leave "dueTime" omitted if user only moves the date, or set "clearDueTime": true if removing time.
+- "update": Change a single task's "title", "courseOrCategory", "type", "priority", "notes", or "addSubtasks".
+- "bulk_delete", "bulk_reschedule", "bulk_update", "bulk_complete", "bulk_uncomplete": ALWAYS use 1 single bulk action when deleting, cancelling, completing, rescheduling, or updating a SERIES, a MONTH or DATE RANGE ("this month", "December", "next 7 days"), or ALL matching tasks! Include "filter": { "seriesId": "string or null", "titleQuery": "string or null", "courseQuery": "string or null", "taskType": "enum or null", "dateFrom": "YYYY-MM-DD or null", "dateTo": "YYYY-MM-DD or null", "matchTime": "HH:mm or null", "completedOnly": false, "pendingOnly": false, "confirmAll": false } (include only relevant filters). For "bulk_reschedule"/"bulk_update", also pass "shiftDays" (int, e.g. 2 to postpone 2 days) and/or "dueDate", "dueTime", "clearDueTime", "title", "courseOrCategory", "taskType", "priority", "notes", "addSubtasks". Only set "confirmAll": true if user explicitly confirms removing/updating ALL tasks.
 - "complete_subtask" / "uncomplete_subtask": Check or uncheck a syllabus item ("subtaskTitle") inside an existing task.
-- "update_reminder_settings": Only when the user asks to change the global default reminder schedule (defaults are 16:00 day-before & 22:00 due-day) or pause/enable notifications globally. Provide "dayBeforeTime" ("HH:mm"), "endOfDayTime" ("HH:mm"), and/or "remindersEnabled" (true/false). Note: to change a specific task's time, use "reschedule"/"update" instead.
+- "update_reminder_settings": Only when the user asks to change the global default reminder schedule (defaults are 16:00 day-before & 22:00 due-day) or pause/enable notifications globally. Provide "dayBeforeTime" ("HH:mm"), "endOfDayTime" ("HH:mm"), and/or "remindersEnabled" (true/false).
 - Queries ("What is due tomorrow?", "Which tasks are pending?", "কাল কী আছে?"): Set "actions": [], put matching IDs in "referencedTaskIds", and summarize concisely in "reply".
 
 AMBIGUITY SAFETY:
-- Match existing tasks using exact "taskId" from the list below.
-- If a command like delete/complete/reschedule could refer to 2+ different tasks and it is unclear which one, set "actions": [] and ask a concise clarifying question naming the possible tasks.
+- Match existing tasks using exact "taskId", or series using exact "seriesId" from the list below.
+- If a single-task delete/complete/reschedule could refer to 2+ unrelated tasks and user did NOT ask for bulk action, set "actions": [] and ask a short clarifying question.
 
-Current saved tasks:
+Current saved tasks & repeating series:
 $tasksBlock$historyBlock
 
 Respond with ONLY a valid JSON object matching this schema:
@@ -1016,11 +1060,11 @@ Respond with ONLY a valid JSON object matching this schema:
   "referencedTaskIds": ["existing-task-id"],
   "actions": [
     {
-      "type": "add|complete|uncomplete|delete|reschedule|update|complete_subtask|uncomplete_subtask|update_reminder_settings",
-      "taskId": "exact existing id for non-add actions, or null",
+      "type": "add|add_recurring|complete|uncomplete|delete|reschedule|update|bulk_delete|bulk_reschedule|bulk_update|bulk_complete|bulk_uncomplete|complete_subtask|uncomplete_subtask|update_reminder_settings",
+      "taskId": "exact existing id or null",
       "taskQuery": "task title fallback if needed",
       "subtaskTitle": "subtask name for subtask actions",
-      "dueDate": "YYYY-MM-DD (for add/reschedule/update)",
+      "dueDate": "YYYY-MM-DD",
       "dueTime": "HH:mm or null",
       "clearDueTime": false,
       "title": "string",
@@ -1029,17 +1073,39 @@ Respond with ONLY a valid JSON object matching this schema:
       "priority": "high|medium|low",
       "notes": "string",
       "addSubtasks": ["string"],
-      "dayBeforeTime": "HH:mm (optional, update_reminder_settings only)",
-      "endOfDayTime": "HH:mm (optional, update_reminder_settings only)",
-      "remindersEnabled": true
+      "dayBeforeTime": "HH:mm",
+      "endOfDayTime": "HH:mm",
+      "remindersEnabled": true,
+      "frequency": "daily|every_n_days|weekly|monthly",
+      "interval": 1,
+      "startDate": "YYYY-MM-DD",
+      "endDate": "YYYY-MM-DD",
+      "durationDays": 40,
+      "durationMonths": 12,
+      "maxOccurrences": 80,
+      "weekdays": [1, 3, 5],
+      "dayOfMonth": 1,
+      "times": ["08:00", "20:00"],
+      "shiftDays": 0,
+      "filter": {
+        "seriesId": "exact seriesId or null",
+        "titleQuery": "string or null",
+        "courseQuery": "string or null",
+        "taskType": "assignment|classTest|exam|lab|meeting|task or null",
+        "dateFrom": "YYYY-MM-DD or null",
+        "dateTo": "YYYY-MM-DD or null",
+        "matchTime": "HH:mm or null",
+        "completedOnly": false,
+        "pendingOnly": false,
+        "confirmAll": false
+      }
     }
   ]
 }
-For "add" actions you may put title/dueDate/dueTime/courseOrCategory/taskType/priority/notes/addSubtasks directly on the action object (or nested under "task").
 ''';
   }
 
-  /// Parses the multilingual To-Do assistant JSON response into structured actions.
+  /// Parses raw model output (single or multi-action JSON) into [AiAssistantResponse].
   static AiAssistantResponse parseAssistantResponse(
     String rawText, {
     required DateTime fallbackDate,
@@ -1124,6 +1190,144 @@ For "add" actions you may put title/dueDate/dueTime/courseOrCategory/taskType/pr
           );
           parsedActions.add(
             AiTaskAction(type: AiActionType.add, newTask: newTask),
+          );
+        } else if (actionType == AiActionType.addRecurring) {
+          final specMap = item['rule'] is Map
+              ? Map<String, dynamic>.from(item['rule'] as Map)
+              : (item['task'] is Map
+                  ? Map<String, dynamic>.from(item['task'] as Map)
+                  : item);
+          final title = _nullIfBlank(
+                (specMap['title'] ?? item['title'])?.toString(),
+              ) ??
+              '';
+          if (title.isEmpty) continue;
+
+          final startDate = _tryParseStrictDate(
+                (specMap['startDate'] ?? specMap['dueDate'] ?? item['startDate'])
+                    ?.toString(),
+              ) ??
+              DateTime(fallbackDate.year, fallbackDate.month, fallbackDate.day);
+          final endDate = _tryParseStrictDate(
+            (specMap['endDate'] ?? item['endDate'])?.toString(),
+          );
+          final times = _parseTimeList(specMap['times'] ?? item['times']);
+          if (times.isEmpty) {
+            final singleTime = _parseTime(
+              (specMap['dueTime'] ?? specMap['time'] ?? item['dueTime'])
+                  ?.toString(),
+            );
+            if (singleTime != null) {
+              times.add(singleTime);
+            }
+          }
+          final rawSubs = (specMap['subtasks'] ??
+                  specMap['addSubtasks'] ??
+                  item['addSubtasks'] ??
+                  const <dynamic>[]) as List<dynamic>? ??
+              const [];
+          final subtasks = rawSubs
+              .map((e) => e.toString().trim())
+              .where((s) => s.isNotEmpty)
+              .toList();
+
+          parsedActions.add(
+            AiTaskAction(
+              type: AiActionType.addRecurring,
+              recurringSpec: RecurringTaskSpec(
+                title: title,
+                courseOrCategory:
+                    _nullIfBlank((specMap['courseOrCategory'] ?? item['courseOrCategory'])?.toString()) ?? '',
+                taskType: TaskType.fromString(
+                  (specMap['taskType'] ?? item['taskType'])?.toString(),
+                ),
+                priority: TaskPriority.fromString(
+                  (specMap['priority'] ?? item['priority'])?.toString(),
+                ),
+                notes: _nullIfBlank((specMap['notes'] ?? item['notes'])?.toString()) ?? '',
+                subtasks: subtasks,
+                frequency: RecurrenceFrequency.fromString(
+                  (specMap['frequency'] ?? item['frequency'])?.toString(),
+                ),
+                interval: _parseInt(specMap['interval'] ?? item['interval']) ?? 1,
+                startDate: startDate,
+                endDate: endDate,
+                durationDays: _parseInt(
+                  specMap['durationDays'] ?? item['durationDays'],
+                ),
+                durationMonths: _parseInt(
+                  specMap['durationMonths'] ?? item['durationMonths'],
+                ),
+                maxOccurrences: _parseInt(
+                  specMap['maxOccurrences'] ?? item['maxOccurrences'],
+                ),
+                weekdays: _parseWeekdays(
+                  specMap['weekdays'] ?? item['weekdays'],
+                ),
+                dayOfMonth: _parseInt(
+                  specMap['dayOfMonth'] ?? item['dayOfMonth'],
+                ),
+                times: times,
+              ),
+            ),
+          );
+        } else if (actionType == AiActionType.bulkDelete ||
+            actionType == AiActionType.bulkReschedule ||
+            actionType == AiActionType.bulkUpdate ||
+            actionType == AiActionType.bulkComplete ||
+            actionType == AiActionType.bulkUncomplete) {
+          final filter = _parseBulkFilter(item);
+          final parsedDue = _tryParseStrictDate(
+            (item['newDueDate'] ?? item['dueDate'])?.toString(),
+          );
+          final parsedTime = _parseTime(
+            (item['newDueTime'] ?? item['dueTime'])?.toString(),
+          );
+          final clearDueTime = item['clearDueTime'] == true;
+          final rawNewTitle = _nullIfBlank(
+            (item['newTitle'] ?? item['title'])?.toString(),
+          );
+          final rawNewCourse = _nullIfBlank(
+            (item['newCourseOrCategory'] ?? item['courseOrCategory'])
+                ?.toString(),
+          );
+          final rawTypeStr = _nullIfBlank(
+            (item['newTaskType'] ?? item['taskType'])?.toString(),
+          );
+          final rawPriorityStr = _nullIfBlank(
+            (item['newPriority'] ?? item['priority'])?.toString(),
+          );
+          final rawNotes = _nullIfBlank(
+            (item['newNotes'] ?? item['notes'])?.toString(),
+          );
+          final rawSubList = (item['addSubtasks'] ??
+                  item['subtasks'] ??
+                  const <dynamic>[]) as List<dynamic>? ??
+              const [];
+          final addSubs = rawSubList
+              .map((e) => e.toString().trim())
+              .where((s) => s.isNotEmpty)
+              .toList();
+
+          parsedActions.add(
+            AiTaskAction(
+              type: actionType,
+              bulkFilter: filter,
+              shiftDays: _parseInt(item['shiftDays']),
+              newDueDate: parsedDue,
+              newDueHour: parsedTime?.$1,
+              newDueMinute: parsedTime?.$2,
+              clearDueTime: clearDueTime,
+              newTitle: rawNewTitle,
+              newCourseOrCategory: rawNewCourse,
+              newTaskType:
+                  rawTypeStr != null ? TaskType.fromString(rawTypeStr) : null,
+              newPriority: rawPriorityStr != null
+                  ? TaskPriority.fromString(rawPriorityStr)
+                  : null,
+              newNotes: rawNotes,
+              addSubtasks: addSubs,
+            ),
           );
         } else if (actionType == AiActionType.updateReminderSettings) {
           final dayBeforeTime = _parseTime(
@@ -1236,6 +1440,136 @@ For "add" actions you may put title/dueDate/dueTime/courseOrCategory/taskType/pr
       referencedTaskIds: referencedIds,
       offTopic: offTopic,
     );
+  }
+
+  static BulkTaskFilter _parseBulkFilter(Map<String, dynamic> item) {
+    final filterMap = item['filter'] is Map
+        ? Map<String, dynamic>.from(item['filter'] as Map)
+        : const <String, dynamic>{};
+
+    final seriesId = _nullIfBlank(
+      (filterMap['seriesId'] ?? item['seriesId'])?.toString(),
+    );
+    final titleQuery = _nullIfBlank(
+      (filterMap['titleQuery'] ??
+              filterMap['title'] ??
+              item['titleQuery'] ??
+              item['taskQuery'])
+          ?.toString(),
+    );
+    final courseQuery = _nullIfBlank(
+      (filterMap['courseQuery'] ??
+              filterMap['courseOrCategory'] ??
+              item['courseQuery'])
+          ?.toString(),
+    );
+    final filterTypeStr = _nullIfBlank(
+      (filterMap['taskType'] ?? filterMap['type'] ?? item['taskTypeFilter'])
+          ?.toString(),
+    );
+    final dateFrom = _tryParseStrictDate(
+      (filterMap['dateFrom'] ?? item['dateFrom'])?.toString(),
+    );
+    final dateTo = _tryParseStrictDate(
+      (filterMap['dateTo'] ?? item['dateTo'])?.toString(),
+    );
+    final matchTime = _parseTime(
+      (filterMap['matchTime'] ?? item['matchTime'])?.toString(),
+    );
+    final completedOnly =
+        filterMap['completedOnly'] == true || item['completedOnly'] == true;
+    final pendingOnly =
+        filterMap['pendingOnly'] == true || item['pendingOnly'] == true;
+    final confirmAll =
+        filterMap['confirmAll'] == true || item['confirmAll'] == true;
+
+    return BulkTaskFilter(
+      seriesId: seriesId,
+      titleQuery: titleQuery,
+      courseQuery: courseQuery,
+      taskType:
+          filterTypeStr != null ? TaskType.fromString(filterTypeStr) : null,
+      dateFrom: dateFrom,
+      dateTo: dateTo,
+      matchTime: matchTime,
+      completedOnly: completedOnly,
+      pendingOnly: pendingOnly,
+      confirmAll: confirmAll,
+    );
+  }
+
+  static int? _parseInt(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is int) return raw;
+    if (raw is num) return raw.round();
+    final norm = _normalizeDigits(raw.toString().trim());
+    return int.tryParse(norm);
+  }
+
+  static List<(int, int)> _parseTimeList(dynamic raw) {
+    final result = <(int, int)>[];
+    if (raw is List) {
+      for (final item in raw) {
+        final t = _parseTime(item?.toString());
+        if (t != null) result.add(t);
+      }
+    } else if (raw is String) {
+      for (final part in raw.split(',')) {
+        final t = _parseTime(part);
+        if (t != null) result.add(t);
+      }
+    }
+    return result;
+  }
+
+  static List<int> _parseWeekdays(dynamic raw) {
+    if (raw is! List) return const [];
+    final out = <int>[];
+    for (final item in raw) {
+      final numVal = _parseInt(item);
+      if (numVal != null && numVal >= 1 && numVal <= 7) {
+        if (!out.contains(numVal)) out.add(numVal);
+        continue;
+      }
+      final name = (item?.toString() ?? '').trim().toLowerCase();
+      final mapped = switch (name) {
+        'mon' || 'monday' || 'সোম' || 'সোমবার' || 'som' || 'sombar' => 1,
+        'tue' ||
+        'tuesday' ||
+        'মঙ্গল' ||
+        'মঙ্গলবার' ||
+        'mongol' ||
+        'mongolbar' =>
+          2,
+        'wed' ||
+        'wednesday' ||
+        'বুধ' ||
+        'বুধবার' ||
+        'budh' ||
+        'budhbar' =>
+          3,
+        'thu' ||
+        'thursday' ||
+        'বৃহস্পতি' ||
+        'বৃহস্পতিবার' ||
+        'brihospoti' =>
+          4,
+        'fri' ||
+        'friday' ||
+        'শুক্র' ||
+        'শুক্রবার' ||
+        'shukro' ||
+        'shukrobar' =>
+          5,
+        'sat' || 'saturday' || 'শনি' || 'শনিবার' || 'shoni' || 'shonibar' => 6,
+        'sun' || 'sunday' || 'রবি' || 'রবিবার' || 'robi' || 'robibar' => 7,
+        _ => null,
+      };
+      if (mapped != null && !out.contains(mapped)) {
+        out.add(mapped);
+      }
+    }
+    return out;
   }
 
   static String? _nullIfBlank(String? raw) {

@@ -466,4 +466,267 @@ void main() {
       expect(find.text('Removed "Project Meeting"'), findsNothing);
     });
   });
+
+  group('Recurring & Bulk Rule Engine', () {
+    test(
+        'expands 40 days twice daily (80 tasks), weekly weekdays, and clamps monthly 31st safely',
+        () {
+      const medicineJson = '''
+{
+  "reply": "Scheduled Medicine twice daily for next 40 days (80 tasks).",
+  "offTopic": false,
+  "referencedTaskIds": [],
+  "actions": [
+    {
+      "type": "add_recurring",
+      "title": "Take Medicine",
+      "courseOrCategory": "Health",
+      "taskType": "task",
+      "priority": "high",
+      "frequency": "daily",
+      "startDate": "2026-11-23",
+      "durationDays": 40,
+      "times": ["08:00", "20:00"]
+    }
+  ]
+}
+''';
+      final parsed = AiParserService.parseAssistantResponse(
+        medicineJson,
+        fallbackDate: DateTime(2026, 11, 22),
+      );
+      expect(parsed.actions, hasLength(1));
+      expect(parsed.actions.single.type, AiActionType.addRecurring);
+
+      final expanded80 = RecurringTaskExpander.expand(
+        parsed.actions.single.recurringSpec!,
+        seriesId: 'series-med-1',
+      );
+      expect(expanded80.wasCapped, isFalse);
+      expect(expanded80.tasks, hasLength(80));
+      expect(expanded80.tasks.every((t) => t.seriesId == 'series-med-1'), isTrue);
+      expect(expanded80.tasks.first.dateKey, '2026-11-23');
+      expect(expanded80.tasks.first.dueHour, 8);
+      expect(expanded80.tasks[1].dateKey, '2026-11-23');
+      expect(expanded80.tasks[1].dueHour, 20);
+      expect(expanded80.tasks.last.dateKey, '2027-01-01');
+
+      // Caps 1-year twice-daily cleanly at 400 tasks without hanging.
+      final yearlyCap = RecurringTaskExpander.expand(
+        RecurringTaskSpec(
+          title: 'Study Session',
+          frequency: RecurrenceFrequency.daily,
+          startDate: DateTime(2026, 11, 23),
+          durationMonths: 12,
+          times: const [(9, 0), (17, 0)],
+        ),
+        seriesId: 'series-year',
+      );
+      expect(yearlyCap.wasCapped, isTrue);
+      expect(yearlyCap.tasks, hasLength(RecurringTaskSpec.maxTasksPerCommand));
+
+      // Monthly day-31 clamping: Jan 31 -> Feb 28 -> Mar 31 -> Apr 30.
+      final monthlyClamp = RecurringTaskExpander.expand(
+        RecurringTaskSpec(
+          title: 'Monthly Bill',
+          frequency: RecurrenceFrequency.monthly,
+          startDate: DateTime(2027, 1, 31),
+          durationMonths: 4,
+          dayOfMonth: 31,
+        ),
+        seriesId: 'series-bill',
+      );
+      expect(monthlyClamp.tasks.map((t) => t.dateKey).toList(), [
+        '2027-01-31',
+        '2027-02-28',
+        '2027-03-31',
+        '2027-04-30',
+      ]);
+
+      // Weekly weekday parsing including Bengali & English weekday names.
+      const weeklyJson = '''
+{
+  "reply": "Scheduled weekly Gym.",
+  "offTopic": false,
+  "actions": [
+    {
+      "type": "add_recurring",
+      "title": "Gym",
+      "frequency": "weekly",
+      "startDate": "2026-11-23",
+      "durationDays": 7,
+      "weekdays": ["সোম", "Wed", 5],
+      "times": ["06:30"]
+    }
+  ]
+}
+''';
+      final weeklyParsed = AiParserService.parseAssistantResponse(
+        weeklyJson,
+        fallbackDate: DateTime(2026, 11, 22),
+      );
+      final weeklyExpanded = RecurringTaskExpander.expand(
+        weeklyParsed.actions.single.recurringSpec!,
+        seriesId: 'series-gym',
+      );
+      expect(weeklyExpanded.tasks.map((t) => t.dateKey).toList(), [
+        '2026-11-23', // Mon
+        '2026-11-25', // Wed
+        '2026-11-27', // Fri
+      ]);
+    });
+
+    test(
+        'system prompt summarizes repeating series compactly & executes bulk reschedule, complete, delete, Undo & tombstones',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      final storage = StorageService();
+      final taskProvider = TaskProvider(
+        storage: storage,
+        notifications: NotificationService(),
+      );
+      await taskProvider.load();
+
+      // Add 40-day twice daily series (80 tasks) via executeAiActions!
+      final addExec = await taskProvider.executeAiActions([
+        AiTaskAction(
+          type: AiActionType.addRecurring,
+          recurringSpec: RecurringTaskSpec(
+            title: 'Medicine',
+            courseOrCategory: 'Health',
+            frequency: RecurrenceFrequency.daily,
+            startDate: DateTime(2026, 11, 23),
+            durationDays: 40,
+            times: const [(8, 0), (20, 0)],
+          ),
+        ),
+        AiTaskAction(
+          type: AiActionType.add,
+          newTask: TaskItem(
+            id: 'standalone-dec',
+            notificationBaseId: 77,
+            title: 'IRE 415 Quiz',
+            type: TaskType.classTest,
+            dueDate: DateTime(2026, 12, 10),
+            createdAt: DateTime(2026, 11, 22),
+          ),
+        ),
+      ]);
+      expect(addExec.added, 81);
+      expect(taskProvider.tasks, hasLength(81));
+
+      // Verify ChatProvider sends compact SERIES summary (1 line for 80 tasks) in system prompt!
+      late String capturedPrompt;
+      final mockClient = MockClient((request) async {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        capturedPrompt = (body['messages'] as List).first['content'].toString();
+        return http.Response(
+          jsonEncode({
+            'choices': [
+              {
+                'message': {
+                  'content': jsonEncode({
+                    'reply': 'Updated Medicine evening time and completed Dec quiz.',
+                    'offTopic': false,
+                    'referencedTaskIds': [],
+                    'actions': [
+                      {
+                        'type': 'bulk_reschedule',
+                        'filter': {
+                          'seriesId': taskProvider.tasks.first.seriesId,
+                          'matchTime': '20:00',
+                        },
+                        'dueTime': '21:00',
+                      },
+                    ],
+                  }),
+                },
+              },
+            ],
+          }),
+          200,
+        );
+      });
+
+      final chatProvider = ChatProvider(
+        storage: storage,
+        parser: AiParserService(client: mockClient),
+      );
+      await chatProvider.load();
+      final cfg = AiProviderConfig.defaults()[AiProviderType.groq]!
+          .copyWith(apiKey: 'gsk-test');
+      await chatProvider.sendScheduleMessage(
+        'Move night Medicine to 9 PM',
+        activeProvider: cfg,
+        taskProvider: taskProvider,
+      );
+
+      expect(capturedPrompt, contains('SERIES seriesId='));
+      expect(capturedPrompt, contains('pending=80'));
+      // Verify 20:00 Medicine tasks moved to 21:00 while 08:00 stayed intact.
+      expect(
+        taskProvider.tasks.where((t) => t.title == 'Medicine' && t.dueHour == 21),
+        hasLength(40),
+      );
+      expect(
+        taskProvider.tasks.where((t) => t.title == 'Medicine' && t.dueHour == 20),
+        isEmpty,
+      );
+      expect(
+        taskProvider.tasks.where((t) => t.title == 'Medicine' && t.dueHour == 8),
+        hasLength(40),
+      );
+
+      // Guardrail: bulk_delete without selector deletes 0 tasks.
+      final unsafeDelete = await taskProvider.executeAiActions(const [
+        AiTaskAction(
+          type: AiActionType.bulkDelete,
+          bulkFilter: BulkTaskFilter(),
+        ),
+      ]);
+      expect(unsafeDelete.deleted, 0);
+      expect(taskProvider.tasks, hasLength(81));
+
+      // Bulk shiftDates & bulk_complete & bulk_uncomplete for December Medicine tasks.
+      final shiftExec = await taskProvider.executeAiActions([
+        AiTaskAction(
+          type: AiActionType.bulkReschedule,
+          shiftDays: 1,
+          bulkFilter: BulkTaskFilter(
+            titleQuery: 'IRE 415 Quiz',
+          ),
+        ),
+        AiTaskAction(
+          type: AiActionType.bulkComplete,
+          bulkFilter: BulkTaskFilter(
+            titleQuery: 'Medicine',
+            dateFrom: DateTime(2026, 12, 1),
+            dateTo: DateTime(2026, 12, 31),
+          ),
+        ),
+      ]);
+      expect(shiftExec.rescheduled, 1);
+      expect(taskProvider.findById('standalone-dec')!.dateKey, '2026-12-11');
+      expect(shiftExec.completed, 62); // 31 days in Dec * 2
+
+      // Bulk delete December Medicine tasks, verify tombstones saved & Undo clears them.
+      final delDec = await taskProvider.executeAiActions([
+        AiTaskAction(
+          type: AiActionType.bulkDelete,
+          bulkFilter: BulkTaskFilter(
+            titleQuery: 'Medicine',
+            dateFrom: DateTime(2026, 12, 1),
+            dateTo: DateTime(2026, 12, 31),
+          ),
+        ),
+      ]);
+      expect(delDec.deleted, 62);
+      expect(taskProvider.tasks, hasLength(19)); // 8 Nov + 1 Jan 1 + 1 Quiz = 19
+      expect(await storage.loadDeletedTaskIds(), hasLength(62));
+
+      await taskProvider.restoreDeletedTasks(delDec.deletedTasks);
+      expect(taskProvider.tasks, hasLength(81));
+      expect(await storage.loadDeletedTaskIds(), isEmpty);
+    });
+  });
 }

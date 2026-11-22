@@ -8,10 +8,12 @@ import 'chat_message.dart';
 import 'reminder_settings.dart';
 import 'task_item.dart';
 
-/// Complete, self-contained cloud snapshot synced to `users/{uid}/backup/state`.
+/// Complete, self-contained cloud snapshot synced to `users/{uid}/backup/state`
+/// or private Google Drive `appDataFolder`.
 @immutable
 class CloudBackupPayload {
   static const String backupAppId = 'h_todo_ai';
+  static const int maxDeletedTombstones = 1000;
 
   const CloudBackupPayload({
     this.schemaVersion = 1,
@@ -21,6 +23,7 @@ class CloudBackupPayload {
     required this.reminderSettings,
     required this.tasks,
     required this.chatMessages,
+    this.deletedTaskIds = const [],
   });
 
   final int schemaVersion;
@@ -30,10 +33,12 @@ class CloudBackupPayload {
   final ReminderSettings reminderSettings;
   final List<TaskItem> tasks;
   final List<ChatMessage> chatMessages;
+  final List<String> deletedTaskIds;
 
   bool get isMeaningfullyEmpty =>
       tasks.isEmpty &&
       chatMessages.isEmpty &&
+      deletedTaskIds.isEmpty &&
       providers.values.every((p) => !p.hasKey);
 
   Map<String, dynamic> toFirestoreMap() => {
@@ -47,6 +52,7 @@ class CloudBackupPayload {
         'reminderSettings': reminderSettings.toJson(),
         'tasks': tasks.map((t) => t.toJson()).toList(),
         'chatMessages': chatMessages.map((m) => m.toJson()).toList(),
+        'deletedTaskIds': deletedTaskIds,
       };
 
   factory CloudBackupPayload.fromFirestoreMap(Map<String, dynamic> map) {
@@ -84,6 +90,12 @@ class CloudBackupPayload {
         .map((m) => ChatMessage.fromJson(Map<String, dynamic>.from(m)))
         .toList();
 
+    final rawDeleted = map['deletedTaskIds'] as List<dynamic>? ?? const [];
+    final deletedIds = rawDeleted
+        .map((e) => e.toString().trim())
+        .where((id) => id.isNotEmpty)
+        .toList();
+
     return CloudBackupPayload(
       schemaVersion: (map['schemaVersion'] as int?) ?? 1,
       updatedAt: DateTime.tryParse(map['updatedAt']?.toString() ?? '') ??
@@ -95,6 +107,7 @@ class CloudBackupPayload {
       reminderSettings: reminder,
       tasks: tasks,
       chatMessages: messages,
+      deletedTaskIds: deletedIds,
     );
   }
 
@@ -133,10 +146,23 @@ class CloudBackupPayload {
   CloudBackupPayload mergeWithLocal(CloudBackupPayload local) {
     final cloudIsNewer = updatedAt.isAfter(local.updatedAt);
 
+    final localActiveIds = local.tasks.map((t) => t.id).toSet();
+    final cloudActiveIds = tasks.map((t) => t.id).toSet();
+    final localDeleted =
+        local.deletedTaskIds.where((id) => !localActiveIds.contains(id)).toSet();
+    final cloudDeleted = cloudIsNewer
+        ? deletedTaskIds.where((id) => !cloudActiveIds.contains(id)).toSet()
+        : <String>{};
+
     final taskById = <String, TaskItem>{
       for (final t in local.tasks) t.id: t,
     };
     for (final cloudTask in tasks) {
+      if (localDeleted.contains(cloudTask.id) &&
+          !(cloudIsNewer && cloudTask.createdAt.isAfter(local.updatedAt))) {
+        continue;
+      }
+
       final existing = taskById[cloudTask.id];
       if (existing == null) {
         taskById[cloudTask.id] = cloudTask;
@@ -169,6 +195,10 @@ class CloudBackupPayload {
           );
         }
       }
+    }
+
+    for (final deletedId in cloudDeleted) {
+      taskById.remove(deletedId);
     }
 
     final msgById = <String, ChatMessage>{
@@ -241,14 +271,31 @@ class CloudBackupPayload {
       }
     }
 
+    final survivingTasks = dedupedBySignature.values.toList();
+    final survivingIds = survivingTasks.map((t) => t.id).toSet();
+    final candidateDeleted = <String>[
+      ...local.deletedTaskIds,
+      if (cloudIsNewer) ...deletedTaskIds,
+    ];
+    final seenDeleted = <String>{};
+    final reversedKeptDeleted = <String>[];
+    for (final id in candidateDeleted.reversed) {
+      if (id.isEmpty || survivingIds.contains(id) || !seenDeleted.add(id)) {
+        continue;
+      }
+      reversedKeptDeleted.add(id);
+      if (reversedKeptDeleted.length >= maxDeletedTombstones) break;
+    }
+
     return CloudBackupPayload(
       schemaVersion: schemaVersion,
       updatedAt: DateTime.now(),
       activeProviderType: resolvedActiveProvider,
       providers: mergedProviders,
       reminderSettings: resolvedReminderSettings,
-      tasks: dedupedBySignature.values.toList(),
+      tasks: survivingTasks,
       chatMessages: mergedMessages,
+      deletedTaskIds: reversedKeptDeleted.reversed.toList(),
     );
   }
 
@@ -272,6 +319,7 @@ class CloudBackupPayload {
       'reminderSettings': reminderSettings.toJson(),
       'tasks': tasks.map((t) => t.toJson()).toList(),
       'chatMessages': chatMessages.map((m) => m.toJson()).toList(),
+      'deletedTaskIds': deletedTaskIds,
     };
   }
 
@@ -336,6 +384,7 @@ class CloudBackupPayload {
       ..sort((a, b) => (a['id']?.toString() ?? '').compareTo(b['id']?.toString() ?? ''));
     final sortedChats = chatMessages.map((m) => m.toJson()).toList()
       ..sort((a, b) => (a['id']?.toString() ?? '').compareTo(b['id']?.toString() ?? ''));
+    final sortedDeleted = List<String>.from(deletedTaskIds)..sort();
 
     final canonical = {
       'schemaVersion': schemaVersion,
@@ -344,6 +393,7 @@ class CloudBackupPayload {
       'reminderSettings': reminderSettings.toJson(),
       'tasks': sortedTasks,
       'chatMessages': sortedChats,
+      'deletedTaskIds': sortedDeleted,
     };
     return sha256.convert(utf8.encode(jsonEncode(canonical))).toString();
   }

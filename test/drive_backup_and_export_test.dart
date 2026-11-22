@@ -450,5 +450,56 @@ void main() {
       await storage.saveLastUpdatedAt(customTs);
       expect(await storage.loadLastUpdatedAt(), customTs);
     });
+
+    test(
+        'deletedTaskIds tombstones serialize cleanly and prevent deleted tasks from resurrecting in mergeWithLocal',
+        () {
+      final tKeep = TaskItem(
+        id: 't-keep',
+        notificationBaseId: 101,
+        title: 'Keep Task',
+        dueDate: DateTime(2026, 11, 25),
+        createdAt: DateTime(2026, 11, 20),
+      );
+      final tDeletedLocally = TaskItem(
+        id: 't-del-offline',
+        notificationBaseId: 102,
+        title: 'Offline Deleted Series Item',
+        dueDate: DateTime(2026, 11, 26),
+        createdAt: DateTime(2026, 11, 20),
+      );
+
+      final olderCloud = CloudBackupPayload(
+        updatedAt: DateTime(2026, 11, 22, 10, 0),
+        activeProviderType: AiProviderType.groq,
+        providers: AiProviderConfig.defaults(),
+        reminderSettings: const ReminderSettings(),
+        tasks: [tKeep, tDeletedLocally],
+        chatMessages: const [],
+      );
+
+      final localWithTombstone = CloudBackupPayload(
+        updatedAt: DateTime(2026, 11, 22, 12, 0),
+        activeProviderType: AiProviderType.groq,
+        providers: AiProviderConfig.defaults(),
+        reminderSettings: const ReminderSettings(),
+        tasks: [tKeep],
+        chatMessages: const [],
+        deletedTaskIds: const ['t-del-offline'],
+      );
+
+      final roundTrip = CloudBackupPayload.fromJsonString(
+        localWithTombstone.toJsonString(),
+      );
+      expect(roundTrip.deletedTaskIds, ['t-del-offline']);
+      expect(
+        localWithTombstone.computeContentFingerprint(),
+        isNot(olderCloud.computeContentFingerprint()),
+      );
+
+      final merged = olderCloud.mergeWithLocal(localWithTombstone);
+      expect(merged.tasks.map((t) => t.id), ['t-keep']);
+      expect(merged.deletedTaskIds, ['t-del-offline']);
+    });
   });
 }

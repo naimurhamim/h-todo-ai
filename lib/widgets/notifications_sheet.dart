@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
-import '../models/reminder_settings.dart';
 import '../models/task_item.dart';
 import '../providers/ai_settings_provider.dart';
 import '../providers/task_provider.dart';
@@ -84,14 +83,14 @@ class NotificationsSheet extends StatelessWidget {
     final pending = taskProvider.tasks.where((t) => !t.isCompleted).toList()
       ..sort((a, b) => _effectiveDue(a).compareTo(_effectiveDue(b)));
 
-    final dayBeforeLabel = ReminderSettings.formatHourMinute(
-      reminder.dayBeforeHour,
-      reminder.dayBeforeMinute,
-    );
-    final dueDayLabel = ReminderSettings.formatHourMinute(
-      reminder.endOfDayHour,
-      reminder.endOfDayMinute,
-    );
+    final todayOnly = DateTime(now.year, now.month, now.day);
+    final cutoffDay = todayOnly.add(const Duration(days: 30));
+    final nearTerm = pending.where((t) {
+      final dueDay = DateTime(t.dueDate.year, t.dueDate.month, t.dueDate.day);
+      return !dueDay.isAfter(cutoffDay);
+    }).toList();
+    final visible = nearTerm.take(50).toList();
+    final hiddenCount = pending.length - visible.length;
 
     return ConstrainedBox(
       constraints: BoxConstraints(
@@ -137,7 +136,7 @@ class NotificationsSheet extends StatelessWidget {
                       const SizedBox(height: 2),
                       Text(
                         reminder.enabled
-                            ? '${pending.length} upcoming • Alerts at $dayBeforeLabel & $dueDayLabel'
+                            ? '${pending.length} upcoming • Next 99 alarms active'
                             : '${pending.length} upcoming • Reminders paused',
                         style: textTheme.bodySmall?.copyWith(
                           color: colors.textSecondary,
@@ -189,11 +188,27 @@ class NotificationsSheet extends StatelessWidget {
               Flexible(
                 child: ListView.separated(
                   shrinkWrap: true,
-                  itemCount: pending.length,
+                  itemCount: visible.length + (hiddenCount > 0 ? 1 : 0),
                   separatorBuilder: (_, _) =>
                       const SizedBox(height: AppSpacing.sm),
                   itemBuilder: (context, index) {
-                    final task = pending[index];
+                    if (index >= visible.length) {
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(
+                          vertical: AppSpacing.sm,
+                        ),
+                        child: Text(
+                          '+ $hiddenCount more tasks scheduled for later dates',
+                          textAlign: TextAlign.center,
+                          style: textTheme.bodySmall?.copyWith(
+                            color: colors.textSecondary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      );
+                    }
+
+                    final task = visible[index];
                     final alerts = NotificationScheduleCalculator.compute(
                       task,
                       reminder,
@@ -204,7 +219,6 @@ class NotificationsSheet extends StatelessWidget {
                       task.dueDate.month,
                       task.dueDate.day,
                     );
-                    final todayOnly = DateTime(now.year, now.month, now.day);
                     final isOverdue = dueDayOnly.isBefore(todayOnly);
 
                     return GlassContainer(

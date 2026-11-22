@@ -78,304 +78,366 @@ class _TasksScreenState extends State<TasksScreen> {
     final timelineEntries = groupedTimeline.entries.toList()
       ..sort((a, b) => a.key.compareTo(b.key));
 
+    final timelineRows = <_TimelineRow>[];
+    if (_timelineMode) {
+      for (final entry in timelineEntries) {
+        timelineRows.add(_TimelineRow.header(entry.key));
+        for (final t in entry.value) {
+          timelineRows.add(_TimelineRow.task(t));
+        }
+      }
+    }
+
     return SafeArea(
       bottom: false,
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: AppLayout.maxContentWidth),
-          child: ListView(
-            padding: EdgeInsets.fromLTRB(
-              AppSpacing.lg,
-              AppSpacing.sm,
-              AppSpacing.lg,
-              wide ? AppSpacing.xl : AppLayout.navClearance,
-            ),
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Plan Your Day',
-                      style: textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  GlassContainer(
-                    borderRadius: AppRadius.pill,
-                    blur: 0,
-                    elevated: true,
-                    padding: const EdgeInsets.all(4),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _ViewToggleIcon(
-                          icon: Icons.calendar_today_outlined,
-                          tooltip: 'Week Grid View',
-                          selected: !_timelineMode,
-                          onTap: () => setState(() => _timelineMode = false),
-                        ),
-                        _ViewToggleIcon(
-                          icon: Icons.view_agenda_outlined,
-                          tooltip: 'Full Timeline View',
-                          selected: _timelineMode,
-                          onTap: () => setState(() => _timelineMode = true),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.md),
-              Row(
-                children: [
-                  Expanded(
-                    child: GlassContainer(
-                      borderRadius: AppRadius.pill,
-                      blur: 0,
-                      padding: const EdgeInsets.all(4),
-                      child: Row(
+          child: CustomScrollView(
+            slivers: [
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg,
+                  AppSpacing.sm,
+                  AppSpacing.lg,
+                  AppSpacing.md,
+                ),
+                sliver: SliverToBoxAdapter(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
                         children: [
                           Expanded(
-                            child: _SegmentItem(
-                              label: 'All Tasks',
-                              selected: !_showCompletedOnly,
-                              onTap: () =>
-                                  setState(() => _showCompletedOnly = false),
+                            child: Text(
+                              'Plan Your Day',
+                              style: textTheme.headlineSmall?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
                           ),
-                          Expanded(
-                            child: _SegmentItem(
-                              label: 'Completed',
-                              selected: _showCompletedOnly,
-                              onTap: () =>
-                                  setState(() => _showCompletedOnly = true),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: AppSpacing.sm),
-                  GlassPillButton(
-                    icon: Icons.auto_awesome_rounded,
-                    iconColor: colors.primary,
-                    label: 'Auto-Plan',
-                    selected: true,
-                    onTap: widget.onGoToAiChat,
-                  ),
-                ],
-              ),
-              if (!_timelineMode) ...[
-                const SizedBox(height: AppSpacing.lg),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        DateFormat('d MMMM, yyyy').format(_selectedDay),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: AppSpacing.sm),
-                    GlassCircleButton(
-                      icon: Icons.chevron_left_rounded,
-                      tooltip: 'Previous week',
-                      size: 38,
-                      onTap: () => setState(() {
-                        _selectedDay =
-                            _selectedDay.subtract(const Duration(days: 7));
-                      }),
-                    ),
-                    const SizedBox(width: AppSpacing.sm),
-                    GlassCircleButton(
-                      icon: Icons.chevron_right_rounded,
-                      tooltip: 'Next week',
-                      size: 38,
-                      onTap: () => setState(() {
-                        _selectedDay =
-                            _selectedDay.add(const Duration(days: 7));
-                      }),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.md),
-                Row(
-                  children: weekDays.map((day) {
-                    final selected = day == _selectedDay;
-                    final isToday = day == today;
-                    final dayItems = statusFiltered
-                        .where((t) => _normalize(t.dueDate) == day)
-                        .toList();
-
-                    return Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 2),
-                        child: GlassContainer(
-                          borderRadius: AppRadius.md,
-                          blur: 0,
-                          elevated: selected,
-                          borderColor: selected
-                              ? colors.primary
-                              : (isToday
-                                  ? colors.textSecondary
-                                  : colors.glassBorder),
-                          onTap: () => setState(() => _selectedDay = day),
-                          padding: const EdgeInsets.symmetric(
-                            vertical: 10,
-                            horizontal: 4,
-                          ),
-                          child: SizedBox(
-                            height: 118,
-                            child: Column(
+                          GlassContainer(
+                            borderRadius: AppRadius.pill,
+                            blur: 0,
+                            elevated: true,
+                            padding: const EdgeInsets.all(4),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
                               children: [
-                                Text(
-                                  '${day.day}',
-                                  style: textTheme.titleSmall?.copyWith(
-                                    fontWeight: FontWeight.w700,
-                                  ),
+                                _ViewToggleIcon(
+                                  icon: Icons.calendar_today_outlined,
+                                  tooltip: 'Week Grid View',
+                                  selected: !_timelineMode,
+                                  onTap: () =>
+                                      setState(() => _timelineMode = false),
                                 ),
-                                Text(
-                                  DateFormat('E').format(day).substring(0, 2),
-                                  style: textTheme.labelSmall,
-                                ),
-                                const SizedBox(height: 8),
-                                Expanded(
-                                  child: dayItems.isEmpty
-                                      ? const SizedBox.shrink()
-                                      : Wrap(
-                                          alignment: WrapAlignment.center,
-                                          spacing: 2,
-                                          runSpacing: 4,
-                                          children: dayItems
-                                              .take(4)
-                                              .map(
-                                                (item) => Icon(
-                                                  taskTypeIcon(item.type),
-                                                  size: 13,
-                                                  color: item.isCompleted
-                                                      ? colors.textSecondary
-                                                      : colors.textPrimary,
-                                                ),
-                                              )
-                                              .toList(),
-                                        ),
+                                _ViewToggleIcon(
+                                  icon: Icons.view_agenda_outlined,
+                                  tooltip: 'Full Timeline View',
+                                  selected: _timelineMode,
+                                  onTap: () =>
+                                      setState(() => _timelineMode = true),
                                 ),
                               ],
                             ),
                           ),
+                        ],
+                      ),
+                      const SizedBox(height: AppSpacing.md),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: GlassContainer(
+                              borderRadius: AppRadius.pill,
+                              blur: 0,
+                              padding: const EdgeInsets.all(4),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: _SegmentItem(
+                                      label: 'All Tasks',
+                                      selected: !_showCompletedOnly,
+                                      onTap: () => setState(
+                                        () => _showCompletedOnly = false,
+                                      ),
+                                    ),
+                                  ),
+                                  Expanded(
+                                    child: _SegmentItem(
+                                      label: 'Completed',
+                                      selected: _showCompletedOnly,
+                                      onTap: () => setState(
+                                        () => _showCompletedOnly = true,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: AppSpacing.sm),
+                          GlassPillButton(
+                            icon: Icons.auto_awesome_rounded,
+                            iconColor: colors.primary,
+                            label: 'Auto-Plan',
+                            selected: true,
+                            onTap: widget.onGoToAiChat,
+                          ),
+                        ],
+                      ),
+                      if (!_timelineMode) ...[
+                        const SizedBox(height: AppSpacing.lg),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                DateFormat('d MMMM, yyyy').format(_selectedDay),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: AppSpacing.sm),
+                            GlassCircleButton(
+                              icon: Icons.chevron_left_rounded,
+                              tooltip: 'Previous week',
+                              size: 38,
+                              onTap: () => setState(() {
+                                _selectedDay = _selectedDay.subtract(
+                                  const Duration(days: 7),
+                                );
+                              }),
+                            ),
+                            const SizedBox(width: AppSpacing.sm),
+                            GlassCircleButton(
+                              icon: Icons.chevron_right_rounded,
+                              tooltip: 'Next week',
+                              size: 38,
+                              onTap: () => setState(() {
+                                _selectedDay = _selectedDay.add(
+                                  const Duration(days: 7),
+                                );
+                              }),
+                            ),
+                          ],
                         ),
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ],
-              const SizedBox(height: AppSpacing.xl),
-              Row(
-                children: [
-                  Text(
-                    _timelineMode ? 'All Scheduled' : 'Agenda',
-                    style: textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const Spacer(),
-                  GlassPillButton(
-                    icon: Icons.add_rounded,
-                    label: 'Add',
-                    onTap: () => TaskEditorSheet.show(
-                      context,
-                      initialDate: _selectedDay,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.md),
-              if (!_timelineMode) ...[
-                if (selectedDayTasks.isEmpty)
-                  _EmptyAgendaCard(
-                    onGoToAiChat: widget.onGoToAiChat,
-                    onAddManual: () => TaskEditorSheet.show(
-                      context,
-                      initialDate: _selectedDay,
-                    ),
-                  )
-                else
-                  for (var i = 0; i < selectedDayTasks.length; i++) ...[
-                    if (i > 0) const SizedBox(height: AppSpacing.sm),
-                    TaskCard(
-                      task: selectedDayTasks[i],
-                      onToggleComplete: () => taskProvider.toggleTaskComplete(
-                        selectedDayTasks[i].id,
-                      ),
-                      onToggleSubtask: (subId) =>
-                          taskProvider.toggleSubtaskComplete(
-                        selectedDayTasks[i].id,
-                        subId,
-                      ),
-                      onDelete: () =>
-                          taskProvider.deleteTask(selectedDayTasks[i].id),
-                      onTap: () => TaskDetailSheet.show(
-                        context,
-                        selectedDayTasks[i].id,
-                      ),
-                    ),
-                  ],
-              ] else ...[
-                if (timelineEntries.isEmpty)
-                  _EmptyAgendaCard(
-                    onGoToAiChat: widget.onGoToAiChat,
-                    onAddManual: () => TaskEditorSheet.show(context),
-                  )
-                else
-                  for (final entry in timelineEntries) ...[
-                    Padding(
-                      padding: const EdgeInsets.only(
-                        top: AppSpacing.sm,
-                        bottom: AppSpacing.sm,
-                      ),
-                      child: Text(
-                        entry.key == today
-                            ? 'Today • ${DateFormat('d MMM yyyy').format(entry.key)}'
-                            : DateFormat('EEE, d MMM yyyy').format(entry.key),
-                        style: textTheme.labelLarge?.copyWith(
-                          color: colors.textSecondary,
-                          fontWeight: FontWeight.w700,
+                        const SizedBox(height: AppSpacing.md),
+                        Row(
+                          children: weekDays.map((day) {
+                            final selected = day == _selectedDay;
+                            final isToday = day == today;
+                            final dayItems = statusFiltered
+                                .where((t) => _normalize(t.dueDate) == day)
+                                .toList();
+
+                            return Expanded(
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 2),
+                                child: GlassContainer(
+                                  borderRadius: AppRadius.md,
+                                  blur: 0,
+                                  elevated: selected,
+                                  borderColor: selected
+                                      ? colors.primary
+                                      : (isToday
+                                          ? colors.textSecondary
+                                          : colors.glassBorder),
+                                  onTap: () =>
+                                      setState(() => _selectedDay = day),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 10,
+                                    horizontal: 4,
+                                  ),
+                                  child: SizedBox(
+                                    height: 118,
+                                    child: Column(
+                                      children: [
+                                        Text(
+                                          '${day.day}',
+                                          style:
+                                              textTheme.titleSmall?.copyWith(
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                        Text(
+                                          DateFormat('E')
+                                              .format(day)
+                                              .substring(0, 2),
+                                          style: textTheme.labelSmall,
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Expanded(
+                                          child: dayItems.isEmpty
+                                              ? const SizedBox.shrink()
+                                              : Wrap(
+                                                  alignment:
+                                                      WrapAlignment.center,
+                                                  spacing: 2,
+                                                  runSpacing: 4,
+                                                  children: dayItems
+                                                      .take(4)
+                                                      .map(
+                                                        (item) => Icon(
+                                                          taskTypeIcon(
+                                                            item.type,
+                                                          ),
+                                                          size: 13,
+                                                          color: item
+                                                                  .isCompleted
+                                                              ? colors
+                                                                  .textSecondary
+                                                              : colors
+                                                                  .textPrimary,
+                                                        ),
+                                                      )
+                                                      .toList(),
+                                                ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          }).toList(),
                         ),
-                      ),
-                    ),
-                    for (var i = 0; i < entry.value.length; i++) ...[
-                      if (i > 0) const SizedBox(height: AppSpacing.sm),
-                      TaskCard(
-                        task: entry.value[i],
-                        onToggleComplete: () => taskProvider.toggleTaskComplete(
-                          entry.value[i].id,
-                        ),
-                        onToggleSubtask: (subId) =>
-                            taskProvider.toggleSubtaskComplete(
-                          entry.value[i].id,
-                          subId,
-                        ),
-                        onDelete: () =>
-                            taskProvider.deleteTask(entry.value[i].id),
-                        onTap: () => TaskDetailSheet.show(
-                          context,
-                          entry.value[i].id,
-                        ),
+                      ],
+                      const SizedBox(height: AppSpacing.xl),
+                      Row(
+                        children: [
+                          Text(
+                            _timelineMode ? 'All Scheduled' : 'Agenda',
+                            style: textTheme.titleLarge?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const Spacer(),
+                          GlassPillButton(
+                            icon: Icons.add_rounded,
+                            label: 'Add',
+                            onTap: () => TaskEditorSheet.show(
+                              context,
+                              initialDate: _selectedDay,
+                            ),
+                          ),
+                        ],
                       ),
                     ],
-                    const SizedBox(height: AppSpacing.md),
-                  ],
-              ],
+                  ),
+                ),
+              ),
+              SliverPadding(
+                padding: EdgeInsets.fromLTRB(
+                  AppSpacing.lg,
+                  0,
+                  AppSpacing.lg,
+                  wide ? AppSpacing.xl : AppLayout.navClearance,
+                ),
+                sliver: !_timelineMode
+                    ? (selectedDayTasks.isEmpty
+                        ? SliverToBoxAdapter(
+                            child: _EmptyAgendaCard(
+                              onGoToAiChat: widget.onGoToAiChat,
+                              onAddManual: () => TaskEditorSheet.show(
+                                context,
+                                initialDate: _selectedDay,
+                              ),
+                            ),
+                          )
+                        : SliverList.separated(
+                            itemCount: selectedDayTasks.length,
+                            separatorBuilder: (_, _) =>
+                                const SizedBox(height: AppSpacing.sm),
+                            itemBuilder: (context, index) {
+                              final item = selectedDayTasks[index];
+                              return TaskCard(
+                                task: item,
+                                onToggleComplete: () =>
+                                    taskProvider.toggleTaskComplete(item.id),
+                                onToggleSubtask: (subId) =>
+                                    taskProvider.toggleSubtaskComplete(
+                                  item.id,
+                                  subId,
+                                ),
+                                onDelete: () =>
+                                    taskProvider.deleteTask(item.id),
+                                onTap: () =>
+                                    TaskDetailSheet.show(context, item.id),
+                              );
+                            },
+                          ))
+                    : (timelineRows.isEmpty
+                        ? SliverToBoxAdapter(
+                            child: _EmptyAgendaCard(
+                              onGoToAiChat: widget.onGoToAiChat,
+                              onAddManual: () => TaskEditorSheet.show(context),
+                            ),
+                          )
+                        : SliverList.builder(
+                            itemCount: timelineRows.length,
+                            itemBuilder: (context, index) {
+                              final row = timelineRows[index];
+                              if (row.headerDate != null) {
+                                final d = row.headerDate!;
+                                return Padding(
+                                  padding: EdgeInsets.only(
+                                    top: index == 0
+                                        ? AppSpacing.xs
+                                        : AppSpacing.lg,
+                                    bottom: AppSpacing.sm,
+                                  ),
+                                  child: Text(
+                                    d == today
+                                        ? 'Today • ${DateFormat('d MMM yyyy').format(d)}'
+                                        : DateFormat('EEE, d MMM yyyy')
+                                            .format(d),
+                                    style: textTheme.labelLarge?.copyWith(
+                                      color: colors.textSecondary,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                );
+                              }
+                              final item = row.task!;
+                              return Padding(
+                                padding: const EdgeInsets.only(
+                                  bottom: AppSpacing.sm,
+                                ),
+                                child: TaskCard(
+                                  task: item,
+                                  onToggleComplete: () =>
+                                      taskProvider.toggleTaskComplete(item.id),
+                                  onToggleSubtask: (subId) =>
+                                      taskProvider.toggleSubtaskComplete(
+                                    item.id,
+                                    subId,
+                                  ),
+                                  onDelete: () =>
+                                      taskProvider.deleteTask(item.id),
+                                  onTap: () =>
+                                      TaskDetailSheet.show(context, item.id),
+                                ),
+                              );
+                            },
+                          )),
+              ),
             ],
           ),
         ),
       ),
     );
   }
+}
+
+class _TimelineRow {
+  const _TimelineRow.header(this.headerDate) : task = null;
+  const _TimelineRow.task(this.task) : headerDate = null;
+
+  final DateTime? headerDate;
+  final TaskItem? task;
 }
 
 class _ViewToggleIcon extends StatelessWidget {

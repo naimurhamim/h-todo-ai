@@ -54,6 +54,7 @@ class TaskActionExecutionResult {
     this.rescheduled = 0,
     this.deleted = 0,
     this.subtasksUpdated = 0,
+    this.wasCapped = false,
     this.affectedTaskIds = const [],
     this.deletedTasks = const [],
   });
@@ -66,6 +67,7 @@ class TaskActionExecutionResult {
   final int rescheduled;
   final int deleted;
   final int subtasksUpdated;
+  final bool wasCapped;
   final List<String> affectedTaskIds;
   final List<TaskItem> deletedTasks;
 
@@ -158,10 +160,11 @@ class TaskProvider extends ChangeNotifier {
     if (newTasks.isEmpty) return;
     _tasks = [..._tasks, ...newTasks];
     await _storage.saveTasks(_tasks);
-    final settings = _readReminderSettings();
-    for (final task in newTasks) {
-      await _notifications.scheduleForTask(task, settings);
-    }
+    await _notifications.rescheduleAll(
+      _tasks,
+      _readReminderSettings(),
+      force: true,
+    );
     notifyListeners();
     _onDataChanged?.call();
   }
@@ -179,7 +182,6 @@ class TaskProvider extends ChangeNotifier {
     }
 
     final working = List<TaskItem>.from(_tasks);
-    final toSchedule = <TaskItem>[];
     final affectedIds = <String>[];
     var added = 0;
     var updated = 0;
@@ -191,7 +193,6 @@ class TaskProvider extends ChangeNotifier {
 
       if (matchIndex == -1) {
         working.add(candidate);
-        toSchedule.add(candidate);
         affectedIds.add(candidate.id);
         added++;
         continue;
@@ -201,9 +202,6 @@ class TaskProvider extends ChangeNotifier {
       final merged = _mergeTaskDetails(existing, candidate);
       if (merged != null) {
         working[matchIndex] = merged;
-        if (!merged.isCompleted) {
-          toSchedule.add(merged);
-        }
         if (!affectedIds.contains(merged.id)) {
           affectedIds.add(merged.id);
         }
@@ -219,10 +217,11 @@ class TaskProvider extends ChangeNotifier {
     if (added > 0 || updated > 0) {
       _tasks = working;
       await _storage.saveTasks(_tasks);
-      final settings = _readReminderSettings();
-      for (final task in toSchedule) {
-        await _notifications.scheduleForTask(task, settings);
-      }
+      await _notifications.rescheduleAll(
+        _tasks,
+        _readReminderSettings(),
+        force: true,
+      );
       notifyListeners();
       _onDataChanged?.call();
     }
@@ -235,8 +234,8 @@ class TaskProvider extends ChangeNotifier {
     );
   }
 
-  /// Executes a batch of conversational To-Do actions (add, complete, uncomplete,
-  /// delete, reschedule, update, subtask toggle) atomically with one save & sync.
+  /// Executes a batch of conversational To-Do actions (single, recurring,
+  /// and bulk delete/complete/reschedule/update) atomically with one save & sync.
   Future<TaskActionExecutionResult> executeAiActions(
     List<AiTaskAction> actions,
   ) async {
@@ -245,9 +244,7 @@ class TaskProvider extends ChangeNotifier {
     }
 
     const uuid = Uuid();
-    final working = List<TaskItem>.from(_tasks);
-    final toSchedule = <TaskItem>[];
-    final toCancel = <TaskItem>[];
+    var working = List<TaskItem>.from(_tasks);
     final affectedIds = <String>[];
     final deletedSnapshots = <TaskItem>[];
 
@@ -259,6 +256,7 @@ class TaskProvider extends ChangeNotifier {
     var rescheduled = 0;
     var deleted = 0;
     var subtasksUpdated = 0;
+    var wasCapped = false;
 
     void markAffected(String id) {
       if (!affectedIds.contains(id)) {
@@ -275,7 +273,6 @@ class TaskProvider extends ChangeNotifier {
         );
         if (dupIndex == -1) {
           working.add(candidate);
-          toSchedule.add(candidate);
           markAffected(candidate.id);
           added++;
         } else {
@@ -283,14 +280,159 @@ class TaskProvider extends ChangeNotifier {
           final merged = _mergeTaskDetails(existing, candidate);
           if (merged != null) {
             working[dupIndex] = merged;
-            if (!merged.isCompleted) {
-              toSchedule.add(merged);
-            }
             markAffected(merged.id);
             updated++;
           } else {
             markAffected(existing.id);
             skipped++;
+          }
+        }
+        continue;
+      }
+
+      if (action.type == AiActionType.addRecurring) {
+        final spec = action.recurringSpec;
+        if (spec == null) continue;
+        final seriesId = uuid.v4();
+        final expanded = RecurringTaskExpander.expand(
+          spec,
+          seriesId: seriesId,
+          createdAt: DateTime.now(),
+        );
+        if (expanded.wasCapped) wasCapped = true;
+        for (final candidate in expanded.tasks) {
+          final dupIndex = working.indexWhere(
+            (existing) => _isSameScheduledTask(existing, candidate),
+          );
+          if (dupIndex == -1) {
+            working.add(candidate);
+            markAffected(candidate.id);
+            added++;
+          } else {
+            final existing = working[dupIndex];
+            final merged = _mergeTaskDetails(existing, candidate);
+            if (merged != null) {
+              working[dupIndex] = merged;
+              markAffected(merged.id);
+              updated++;
+            } else {
+              markAffected(existing.id);
+              skipped++;
+            }
+          }
+        }
+        continue;
+      }
+
+      if (action.type == AiActionType.bulkDelete ||
+          action.type == AiActionType.bulkReschedule ||
+          action.type == AiActionType.bulkUpdate ||
+          action.type == AiActionType.bulkComplete ||
+          action.type == AiActionType.bulkUncomplete) {
+        final filter = action.bulkFilter;
+        if (filter == null || !filter.hasExplicitSelector) continue;
+
+        if (action.type == AiActionType.bulkDelete) {
+          final kept = <TaskItem>[];
+          for (final item in working) {
+            if (_matchesBulkFilter(item, filter)) {
+              deletedSnapshots.add(item);
+              affectedIds.remove(item.id);
+              deleted++;
+            } else {
+              kept.add(item);
+            }
+          }
+          working = kept;
+          continue;
+        }
+
+        for (var i = 0; i < working.length; i++) {
+          final current = working[i];
+          if (!_matchesBulkFilter(current, filter)) continue;
+
+          switch (action.type) {
+            case AiActionType.bulkComplete:
+              if (!current.isCompleted) {
+                working[i] = current.copyWith(
+                  isCompleted: true,
+                  completedAt: DateTime.now(),
+                );
+                completed++;
+              }
+              markAffected(current.id);
+            case AiActionType.bulkUncomplete:
+              if (current.isCompleted) {
+                working[i] = current.copyWith(
+                  isCompleted: false,
+                  clearCompletedAt: true,
+                );
+                uncompleted++;
+              }
+              markAffected(current.id);
+            case AiActionType.bulkReschedule:
+            case AiActionType.bulkUpdate:
+              final nextDate = action.shiftDays != null
+                  ? DateTime(
+                      current.dueDate.year,
+                      current.dueDate.month,
+                      current.dueDate.day + action.shiftDays!,
+                    )
+                  : (action.newDueDate ?? current.dueDate);
+              final hasNewTime =
+                  action.newDueHour != null && action.newDueMinute != null;
+              final mergedSubs = _mergeNewSubtaskTitles(
+                current.subtasks,
+                action.addSubtasks,
+                uuid,
+              );
+              final nextNotes =
+                  _mergeActionNotes(current.notes, action.newNotes);
+              final next = current.copyWith(
+                title: action.newTitle ?? current.title,
+                courseOrCategory:
+                    action.newCourseOrCategory ?? current.courseOrCategory,
+                type: action.newTaskType ?? current.type,
+                priority: action.newPriority ?? current.priority,
+                dueDate: nextDate,
+                dueHour: hasNewTime ? action.newDueHour : current.dueHour,
+                dueMinute: hasNewTime ? action.newDueMinute : current.dueMinute,
+                clearDueTime: action.clearDueTime && !hasNewTime,
+                notes: nextNotes,
+                subtasks: mergedSubs,
+              );
+              final dateOrTimeChanged = next.dateKey != current.dateKey ||
+                  next.dueHour != current.dueHour ||
+                  next.dueMinute != current.dueMinute;
+              final anyChanged = dateOrTimeChanged ||
+                  next.title != current.title ||
+                  next.courseOrCategory != current.courseOrCategory ||
+                  next.type != current.type ||
+                  next.priority != current.priority ||
+                  next.notes != current.notes ||
+                  next.subtasks.length != current.subtasks.length;
+              if (anyChanged) {
+                working[i] = next;
+                if (action.type == AiActionType.bulkReschedule ||
+                    dateOrTimeChanged) {
+                  rescheduled++;
+                } else {
+                  updated++;
+                }
+              }
+              markAffected(next.id);
+            case AiActionType.add:
+            case AiActionType.addRecurring:
+            case AiActionType.complete:
+            case AiActionType.uncomplete:
+            case AiActionType.delete:
+            case AiActionType.reschedule:
+            case AiActionType.update:
+            case AiActionType.bulkDelete:
+            case AiActionType.completeSubtask:
+            case AiActionType.uncompleteSubtask:
+            case AiActionType.updateReminderSettings:
+              break;
           }
         }
         continue;
@@ -302,6 +444,12 @@ class TaskProvider extends ChangeNotifier {
 
       switch (action.type) {
         case AiActionType.add:
+        case AiActionType.addRecurring:
+        case AiActionType.bulkDelete:
+        case AiActionType.bulkReschedule:
+        case AiActionType.bulkUpdate:
+        case AiActionType.bulkComplete:
+        case AiActionType.bulkUncomplete:
         case AiActionType.updateReminderSettings:
           break;
         case AiActionType.complete:
@@ -311,7 +459,6 @@ class TaskProvider extends ChangeNotifier {
               completedAt: DateTime.now(),
             );
             working[idx] = next;
-            toCancel.add(next);
             completed++;
           }
           markAffected(current.id);
@@ -322,13 +469,11 @@ class TaskProvider extends ChangeNotifier {
               clearCompletedAt: true,
             );
             working[idx] = next;
-            toSchedule.add(next);
             uncompleted++;
           }
           markAffected(current.id);
         case AiActionType.delete:
           deletedSnapshots.add(current);
-          toCancel.add(current);
           working.removeAt(idx);
           affectedIds.remove(current.id);
           deleted++;
@@ -360,10 +505,6 @@ class TaskProvider extends ChangeNotifier {
               next.dueHour != current.dueHour ||
               next.dueMinute != current.dueMinute;
           working[idx] = next;
-          if (!next.isCompleted &&
-              (dateOrTimeChanged || next.title != current.title)) {
-            toSchedule.add(next);
-          }
           if (action.type == AiActionType.reschedule || dateOrTimeChanged) {
             rescheduled++;
           } else {
@@ -404,6 +545,7 @@ class TaskProvider extends ChangeNotifier {
       rescheduled: rescheduled,
       deleted: deleted,
       subtasksUpdated: subtasksUpdated,
+      wasCapped: wasCapped,
       affectedTaskIds: affectedIds,
       deletedTasks: deletedSnapshots,
     );
@@ -411,13 +553,13 @@ class TaskProvider extends ChangeNotifier {
     if (result.hasChanges) {
       _tasks = working;
       await _storage.saveTasks(_tasks);
+      if (deletedSnapshots.isNotEmpty) {
+        await _storage.recordDeletedTaskIds(
+          deletedSnapshots.map((t) => t.id),
+        );
+      }
       final settings = _readReminderSettings();
-      for (final task in toCancel) {
-        await _notifications.cancelForTask(task);
-      }
-      for (final task in toSchedule) {
-        await _notifications.scheduleForTask(task, settings);
-      }
+      await _notifications.rescheduleAll(_tasks, settings, force: true);
       notifyListeners();
       _onDataChanged?.call();
     }
@@ -434,14 +576,73 @@ class TaskProvider extends ChangeNotifier {
 
     _tasks = [..._tasks, ...toAdd];
     await _storage.saveTasks(_tasks);
-    final settings = _readReminderSettings();
-    for (final task in toAdd) {
-      if (!task.isCompleted) {
-        await _notifications.scheduleForTask(task, settings);
-      }
-    }
+    await _storage.removeDeletedTaskIds(toAdd.map((t) => t.id));
+    await _notifications.rescheduleAll(
+      _tasks,
+      _readReminderSettings(),
+      force: true,
+    );
     notifyListeners();
     _onDataChanged?.call();
+  }
+
+  static bool _matchesBulkFilter(TaskItem t, BulkTaskFilter f) {
+    if (!f.hasExplicitSelector) return false;
+
+    if (f.seriesId != null && f.seriesId!.trim().isNotEmpty) {
+      if (t.seriesId != f.seriesId!.trim()) return false;
+    }
+
+    if (f.titleQuery != null && f.titleQuery!.trim().isNotEmpty) {
+      final q = _normalizeKey(f.titleQuery!);
+      final titleNorm = _normalizeKey(t.title);
+      final combinedNorm = _normalizeKey('${t.courseOrCategory} ${t.title}');
+      final matchesTitle = titleNorm == q ||
+          titleNorm.contains(q) ||
+          combinedNorm.contains(q) ||
+          (titleNorm.length >= 3 && q.contains(titleNorm));
+      if (!matchesTitle) return false;
+    }
+
+    if (f.courseQuery != null && f.courseQuery!.trim().isNotEmpty) {
+      final cq = _normalizeKey(f.courseQuery!);
+      final courseNorm = _normalizeKey(t.courseOrCategory);
+      if (courseNorm.isEmpty ||
+          !(courseNorm.contains(cq) || cq.contains(courseNorm))) {
+        return false;
+      }
+    }
+
+    if (f.taskType != null && t.type != f.taskType) {
+      return false;
+    }
+
+    final d = DateTime(t.dueDate.year, t.dueDate.month, t.dueDate.day);
+    if (f.dateFrom != null) {
+      final from = DateTime(
+        f.dateFrom!.year,
+        f.dateFrom!.month,
+        f.dateFrom!.day,
+      );
+      if (d.isBefore(from)) return false;
+    }
+    if (f.dateTo != null) {
+      final to = DateTime(f.dateTo!.year, f.dateTo!.month, f.dateTo!.day);
+      if (d.isAfter(to)) return false;
+    }
+
+    if (f.matchTime != null) {
+      if (!t.hasDueTime ||
+          t.dueHour != f.matchTime!.$1 ||
+          t.dueMinute != f.matchTime!.$2) {
+        return false;
+      }
+    }
+
+    if (f.completedOnly && !t.isCompleted) return false;
+    if (f.pendingOnly && t.isCompleted) return false;
+
+    return true;
   }
 
   static int _resolveTargetIndex(
@@ -597,12 +798,11 @@ class TaskProvider extends ChangeNotifier {
     if (index == -1) return;
     _tasks[index] = updated;
     await _storage.saveTasks(_tasks);
-    final settings = _readReminderSettings();
-    if (updated.isCompleted) {
-      await _notifications.cancelForTask(updated);
-    } else {
-      await _notifications.scheduleForTask(updated, settings);
-    }
+    await _notifications.rescheduleAll(
+      _tasks,
+      _readReminderSettings(),
+      force: true,
+    );
     notifyListeners();
     _onDataChanged?.call();
   }
@@ -612,7 +812,12 @@ class TaskProvider extends ChangeNotifier {
     if (target == null) return;
     _tasks.removeWhere((t) => t.id == id);
     await _storage.saveTasks(_tasks);
-    await _notifications.cancelForTask(target);
+    await _storage.recordDeletedTaskIds([id]);
+    await _notifications.rescheduleAll(
+      _tasks,
+      _readReminderSettings(),
+      force: true,
+    );
     notifyListeners();
     _onDataChanged?.call();
   }
@@ -629,11 +834,11 @@ class TaskProvider extends ChangeNotifier {
     );
     _tasks[index] = updated;
     await _storage.saveTasks(_tasks);
-    if (nextDone) {
-      await _notifications.cancelForTask(updated);
-    } else {
-      await _notifications.scheduleForTask(updated, _readReminderSettings());
-    }
+    await _notifications.rescheduleAll(
+      _tasks,
+      _readReminderSettings(),
+      force: true,
+    );
     notifyListeners();
     _onDataChanged?.call();
   }
@@ -663,12 +868,18 @@ class TaskProvider extends ChangeNotifier {
     _tasks = List<TaskItem>.from(restoredTasks);
     _loaded = true;
     await _storage.saveTasks(_tasks);
-    await _notifications.rescheduleAll(_tasks, settings);
+    await _notifications.rescheduleAll(_tasks, settings, force: true);
     notifyListeners();
   }
 
   Future<void> rescheduleAllNotifications(ReminderSettings settings) async {
-    await _notifications.rescheduleAll(_tasks, settings);
+    await _notifications.rescheduleAll(_tasks, settings, force: true);
+  }
+
+  /// Refreshes the 99-alarm rolling window when returning to the foreground.
+  Future<void> refreshRollingNotifications(ReminderSettings settings) async {
+    if (!_loaded) return;
+    await _notifications.rescheduleAll(_tasks, settings, force: false);
   }
 
   /// Returns filtered tasks sorted by due date, then completion state, then priority.

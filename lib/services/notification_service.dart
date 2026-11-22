@@ -28,6 +28,8 @@ class ScheduledReminder {
 
 /// Pure, deterministic reminder calculator (testable without platform plugins).
 abstract final class NotificationScheduleCalculator {
+  static const int maxScheduledAlarms = 99;
+
   static DateTime? _effectiveFutureTime(DateTime target, DateTime refNow) {
     if (target.isAfter(refNow)) return target;
     final elapsed = refNow.difference(target);
@@ -134,14 +136,45 @@ abstract final class NotificationScheduleCalculator {
 
     return reminders;
   }
+
+  /// Selects up to [maxAlarms] soonest upcoming reminders across all uncompleted tasks.
+  static List<({ScheduledReminder reminder, String taskId})>
+      computeRollingWindow(
+    List<TaskItem> tasks,
+    ReminderSettings settings, {
+    DateTime? now,
+    int maxAlarms = maxScheduledAlarms,
+  }) {
+    if (!settings.enabled || maxAlarms <= 0) {
+      return const [];
+    }
+    final refNow = now ?? DateTime.now();
+    final entries = <({ScheduledReminder reminder, String taskId})>[];
+    for (final task in tasks) {
+      if (task.isCompleted) continue;
+      final computed = compute(task, settings, now: refNow);
+      for (final reminder in computed) {
+        entries.add((reminder: reminder, taskId: task.id));
+      }
+    }
+    entries.sort((a, b) {
+      final timeCmp = a.reminder.scheduledAt.compareTo(b.reminder.scheduledAt);
+      if (timeCmp != 0) return timeCmp;
+      return a.reminder.id.compareTo(b.reminder.id);
+    });
+    if (entries.length <= maxAlarms) return entries;
+    return entries.sublist(0, maxAlarms);
+  }
 }
 
-/// Coordinates exact Android/iOS local notifications for day-before, custom task time, and end-of-day reminders.
+/// Coordinates exact Android/iOS local notifications with a 99-alarm rolling window.
 class NotificationService {
   NotificationService({
     FlutterLocalNotificationsPlugin? plugin,
   }) : _plugin = plugin ?? FlutterLocalNotificationsPlugin();
 
+  static const int maxScheduledAlarms =
+      NotificationScheduleCalculator.maxScheduledAlarms;
   static const _channelId = 'htodo_reminders_v2';
   static const _channelName = 'Schedule Reminders';
   static const _channelDescription =
@@ -155,6 +188,7 @@ class NotificationService {
   bool _platformReady = false;
   Future<void>? _initFuture;
   bool _permissionRequestInFlight = false;
+  String? _lastScheduledSignature;
 
   bool get _supportsPlatformScheduling {
     if (kIsWeb) return false;
@@ -406,6 +440,7 @@ class NotificationService {
     TaskItem task,
     ReminderSettings settings,
   ) async {
+    _lastScheduledSignature = null;
     await init();
     await cancelForTask(task);
 
@@ -416,6 +451,7 @@ class NotificationService {
   }
 
   Future<void> cancelForTask(TaskItem task) async {
+    _lastScheduledSignature = null;
     if (!_supportsPlatformScheduling || !_platformReady) return;
     final safeBase = task.notificationBaseId & 0x0FFFFFFF;
     final todayExtraBase = 0x40000000 + safeBase * 3;
@@ -439,23 +475,55 @@ class NotificationService {
 
   Future<void> rescheduleAll(
     List<TaskItem> tasks,
-    ReminderSettings settings,
-  ) async {
+    ReminderSettings settings, {
+    bool force = false,
+  }) async {
     await init();
     if (!_supportsPlatformScheduling || !_platformReady) return;
+
+    final window = NotificationScheduleCalculator.computeRollingWindow(
+      tasks,
+      settings,
+      maxAlarms: maxScheduledAlarms,
+    );
+    final buf = StringBuffer()..write(settings.enabled ? '1' : '0');
+    for (final entry in window) {
+      final r = entry.reminder;
+      buf
+        ..write(';')
+        ..write(r.id)
+        ..write('|')
+        ..write(r.scheduledAt.millisecondsSinceEpoch)
+        ..write('|')
+        ..write(r.title)
+        ..write('|')
+        ..write(r.body);
+    }
+    final signature = buf.toString();
+    if (!force && signature == _lastScheduledSignature) return;
 
     try {
       await _plugin.cancelAll();
     } catch (_) {}
 
-    if (!settings.enabled) return;
+    if (!settings.enabled || window.isEmpty) {
+      _lastScheduledSignature = signature;
+      return;
+    }
 
     final mode = await _resolveScheduleMode(promptIfDenied: false);
-    for (final task in tasks) {
-      if (!task.isCompleted) {
-        await _scheduleTaskReminders(task, settings, mode: mode);
-      }
+    for (final entry in window) {
+      final r = entry.reminder;
+      await _zonedScheduleWithFallback(
+        id: r.id,
+        title: r.title,
+        body: r.body,
+        tzDate: _toLocalTz(r.scheduledAt),
+        preferredMode: mode,
+        payload: entry.taskId,
+      );
     }
+    _lastScheduledSignature = signature;
   }
 
   Future<String> showTestNotification() async {

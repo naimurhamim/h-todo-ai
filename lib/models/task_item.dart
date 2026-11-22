@@ -136,6 +136,7 @@ class TaskItem {
     this.subtasks = const [],
     this.isCompleted = false,
     this.completedAt,
+    this.seriesId,
   });
 
   final String id;
@@ -152,6 +153,7 @@ class TaskItem {
   final bool isCompleted;
   final DateTime? completedAt;
   final DateTime createdAt;
+  final String? seriesId;
 
   bool get hasDueTime => dueHour != null && dueMinute != null;
 
@@ -199,6 +201,8 @@ class TaskItem {
     DateTime? completedAt,
     bool clearCompletedAt = false,
     DateTime? createdAt,
+    String? seriesId,
+    bool clearSeriesId = false,
   }) {
     return TaskItem(
       id: id ?? this.id,
@@ -216,6 +220,7 @@ class TaskItem {
       completedAt:
           clearCompletedAt ? null : (completedAt ?? this.completedAt),
       createdAt: createdAt ?? this.createdAt,
+      seriesId: clearSeriesId ? null : (seriesId ?? this.seriesId),
     );
   }
 
@@ -234,12 +239,14 @@ class TaskItem {
         'isCompleted': isCompleted,
         'completedAt': completedAt?.toIso8601String(),
         'createdAt': createdAt.toIso8601String(),
+        if (seriesId != null) 'seriesId': seriesId,
       };
 
   factory TaskItem.fromJson(Map<String, dynamic> json) {
     final parsedDue = DateTime.tryParse(json['dueDate']?.toString() ?? '') ??
         DateTime.now();
     final id = json['id']?.toString() ?? '';
+    final rawSeries = json['seriesId']?.toString().trim();
     return TaskItem(
       id: id,
       notificationBaseId: (json['notificationBaseId'] as int?) ??
@@ -262,6 +269,7 @@ class TaskItem {
           : null,
       createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
           DateTime.now(),
+      seriesId: (rawSeries == null || rawSeries.isEmpty) ? null : rawSeries,
     );
   }
 }

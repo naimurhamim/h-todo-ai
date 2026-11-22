@@ -113,11 +113,16 @@ class ChatProvider extends ChangeNotifier {
           if (!exec.affectedTaskIds.contains(id) &&
               taskProvider.findById(id) != null)
             id,
-      ];
+      ].take(10).toList();
 
-      final replyText = exec.skipped > 0
-          ? '${result.reply}\n(${exec.skipped} skipped as duplicate)'
-          : result.reply;
+      final extraNotes = <String>[
+        if (exec.skipped > 0) '${exec.skipped} skipped as duplicate',
+        if (exec.wasCapped)
+          'Capped at ${RecurringTaskSpec.maxTasksPerCommand} tasks / 366 days per command',
+      ];
+      final replyText = extraNotes.isEmpty
+          ? result.reply
+          : '${result.reply}\n(${extraNotes.join('; ')})';
 
       final assistantMessage = ChatMessage(
         id: _uuid.v4(),

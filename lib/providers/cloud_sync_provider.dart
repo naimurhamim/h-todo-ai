@@ -49,6 +49,7 @@ class CloudSyncProvider extends ChangeNotifier {
   bool _uploadInFlight = false;
   bool _queuedUpload = false;
   DateTime _lastLocalUpdatedAt = DateTime.fromMillisecondsSinceEpoch(0);
+  List<String> _deletedTaskIds = const [];
   String? _lastSyncedFingerprint;
   String? _errorMessage;
   String? _migrationNotice;
@@ -67,6 +68,7 @@ class CloudSyncProvider extends ChangeNotifier {
 
   Future<void> _initSession() async {
     _profile = await _storage.loadGoogleProfile();
+    _deletedTaskIds = await _storage.loadDeletedTaskIds();
     if (_lastLocalUpdatedAt.millisecondsSinceEpoch == 0) {
       _lastLocalUpdatedAt =
           (await _storage.loadLastUpdatedAt()) ?? _lastLocalUpdatedAt;
@@ -76,6 +78,7 @@ class CloudSyncProvider extends ChangeNotifier {
     if (!_service.isAvailable) return;
     await _waitForLocalLoads();
 
+    _deletedTaskIds = await _storage.loadDeletedTaskIds();
     if (_lastLocalUpdatedAt.millisecondsSinceEpoch == 0) {
       _lastLocalUpdatedAt =
           (await _storage.loadLastUpdatedAt()) ?? _lastLocalUpdatedAt;
@@ -120,6 +123,7 @@ class CloudSyncProvider extends ChangeNotifier {
   CloudBackupPayload _buildCurrentPayload() {
     final hasLocalData = _tasks.tasks.isNotEmpty ||
         _chat.messages.isNotEmpty ||
+        _deletedTaskIds.isNotEmpty ||
         _aiSettings.providers.values.any((p) => p.hasKey);
     final updatedAt =
         _lastLocalUpdatedAt.millisecondsSinceEpoch == 0 && hasLocalData
@@ -132,6 +136,7 @@ class CloudSyncProvider extends ChangeNotifier {
       reminderSettings: _aiSettings.reminderSettings,
       tasks: _tasks.tasks,
       chatMessages: _chat.messages,
+      deletedTaskIds: _deletedTaskIds,
     );
   }
 
@@ -148,6 +153,8 @@ class CloudSyncProvider extends ChangeNotifier {
         payload.reminderSettings,
       );
       await _chat.applyRestoredState(payload.chatMessages);
+      _deletedTaskIds = List<String>.from(payload.deletedTaskIds);
+      await _storage.saveDeletedTaskIds(_deletedTaskIds);
       _lastLocalUpdatedAt = payload.updatedAt;
       await _storage.saveLastUpdatedAt(_lastLocalUpdatedAt);
     } finally {
@@ -165,6 +172,7 @@ class CloudSyncProvider extends ChangeNotifier {
       final driveRes = await _service.fetchDriveBackup(
         promptIfNecessary: promptIfNecessary,
       );
+      _deletedTaskIds = await _storage.loadDeletedTaskIds();
       final local = _buildCurrentPayload();
 
       if (driveRes.payload != null) {
@@ -342,6 +350,7 @@ class CloudSyncProvider extends ChangeNotifier {
 
     var succeeded = true;
     try {
+      _deletedTaskIds = await _storage.loadDeletedTaskIds();
       do {
         _queuedUpload = false;
         if (!_service.isSignedInSessionActive) {
@@ -354,6 +363,7 @@ class CloudSyncProvider extends ChangeNotifier {
           }
         }
 
+        _deletedTaskIds = await _storage.loadDeletedTaskIds();
         final payload = _buildCurrentPayload();
         final fingerprint = payload.computeContentFingerprint();
         if (silent && fingerprint == _lastSyncedFingerprint) {
@@ -443,6 +453,7 @@ class CloudSyncProvider extends ChangeNotifier {
   /// Writes a `.json` backup file and opens the OS share sheet.
   Future<String> exportBackupToFile({bool includeApiKeys = true}) async {
     await _waitForLocalLoads();
+    _deletedTaskIds = await _storage.loadDeletedTaskIds();
     final jsonText = buildExportJson(includeApiKeys: includeApiKeys);
     return _localBackup.exportJsonFile(jsonText);
   }
@@ -464,6 +475,7 @@ class CloudSyncProvider extends ChangeNotifier {
     bool includesApiKeys = true,
   }) async {
     await _waitForLocalLoads();
+    _deletedTaskIds = await _storage.loadDeletedTaskIds();
     final local = _buildCurrentPayload();
 
     final CloudBackupPayload target;
@@ -480,6 +492,7 @@ class CloudSyncProvider extends ChangeNotifier {
         reminderSettings: imported.reminderSettings,
         tasks: imported.tasks,
         chatMessages: imported.chatMessages,
+        deletedTaskIds: imported.deletedTaskIds,
       );
     }
 
