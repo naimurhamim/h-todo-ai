@@ -206,9 +206,11 @@ class _TaskEditorSheetState extends State<TaskEditorSheet> {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  reminder.enabled
-                      ? 'Default alerts fire at $dayBeforeStr day before & $endOfDayStr due day (plus custom time if set).'
-                      : 'Notifications are paused in Profile -> Reminders.',
+                  !reminder.enabled
+                      ? 'Notifications are paused in Profile -> Reminders.'
+                      : (_dueTime != null
+                          ? 'Custom alert active: fires only at ${_dueTime!.format(context)} on due date (default alerts disabled).'
+                          : 'Default alerts: $dayBeforeStr day before & $endOfDayStr on due date. Set a custom time to override.'),
                   style: textTheme.labelSmall,
                 ),
                 const SizedBox(height: AppSpacing.lg),

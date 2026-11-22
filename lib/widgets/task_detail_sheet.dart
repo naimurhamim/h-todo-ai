@@ -174,28 +174,35 @@ class TaskDetailSheet extends StatelessWidget {
                     ),
                     if (!done) ...[
                       const SizedBox(height: AppSpacing.sm),
-                      Text(
-                        'Day-before alert: $dayBeforeDateLabel at ${ReminderSettings.formatHourMinute(settings.dayBeforeHour, settings.dayBeforeMinute)}',
-                        style: textTheme.bodySmall?.copyWith(
-                          color: colors.textPrimary,
-                        ),
-                      ),
                       if (task.hasDueTime) ...[
-                        const SizedBox(height: 4),
                         Text(
                           'Custom task alert: $dueDayLabel at ${task.formattedDueTime}',
                           style: textTheme.bodySmall?.copyWith(
                             color: colors.textPrimary,
                           ),
                         ),
-                      ],
-                      const SizedBox(height: 4),
-                      Text(
-                        'End-of-day check-in: $dueDayLabel at ${ReminderSettings.formatHourMinute(settings.endOfDayHour, settings.endOfDayMinute)}',
-                        style: textTheme.bodySmall?.copyWith(
-                          color: colors.textPrimary,
+                        const SizedBox(height: 4),
+                        Text(
+                          'Default reminders disabled while custom time is set.',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: colors.textSecondary,
+                          ),
                         ),
-                      ),
+                      ] else ...[
+                        Text(
+                          'Day-before alert: $dayBeforeDateLabel at ${ReminderSettings.formatHourMinute(settings.dayBeforeHour, settings.dayBeforeMinute)}',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: colors.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'End-of-day check-in: $dueDayLabel at ${ReminderSettings.formatHourMinute(settings.endOfDayHour, settings.endOfDayMinute)}',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: colors.textPrimary,
+                          ),
+                        ),
+                      ],
                     ],
                   ],
                 ),

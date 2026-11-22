@@ -6,218 +6,118 @@ import 'package:h_todo_ai/services/notification_service.dart';
 
 void main() {
   group('NotificationScheduleCalculator.compute', () {
-    final taskWithDueTime = TaskItem(
+    final taskWithCustomTime = TaskItem(
       id: 'task-1',
       notificationBaseId: 500,
       title: 'Class Test',
       courseOrCategory: 'IRE 415 – Computer Vision',
       type: TaskType.classTest,
-      dueDate: DateTime(2026, 11, 22),
+      dueDate: DateTime(2026, 11, 25),
       dueHour: 10,
       dueMinute: 0,
       createdAt: DateTime(2026, 11, 20),
     );
 
-    final taskNoDueTime = TaskItem(
+    final taskNoCustomTime = TaskItem(
       id: 'task-2',
       notificationBaseId: 501,
       title: 'Assignment 01',
       courseOrCategory: 'IRE 415',
       type: TaskType.assignment,
-      dueDate: DateTime(2026, 11, 22),
+      dueDate: DateTime(2026, 11, 25),
       createdAt: DateTime(2026, 11, 20),
     );
 
     const settings = ReminderSettings(
       enabled: true,
-      dayBeforeHour: 20,
+      dayBeforeHour: 17,
       dayBeforeMinute: 0,
-      endOfDayHour: 21,
+      endOfDayHour: 22,
       endOfDayMinute: 0,
     );
 
     test(
-        'schedules day-before, custom task due-time, end-of-day alerts, and today active reminders when upcoming today',
+        'task WITH custom time schedules ONLY 1 alert on dueDate and disables defaults',
         () {
       final reminders = NotificationScheduleCalculator.compute(
-        taskWithDueTime,
+        taskWithCustomTime,
         settings,
-        now: DateTime(2026, 11, 20, 19, 0),
+        now: DateTime(2026, 11, 22, 16, 55),
       );
 
-      expect(reminders.length, 5);
-
-      expect(reminders[0].id, 0x40000000 + 1500);
-      expect(reminders[0].isDayBefore, isTrue);
-      expect(reminders[0].scheduledAt, DateTime(2026, 11, 20, 20, 0));
-      expect(reminders[0].title, 'Upcoming: Class Test');
-
-      expect(reminders[1].id, 0x40000000 + 1501);
-      expect(reminders[1].isDayBefore, isFalse);
-      expect(reminders[1].isCustomTime, isFalse);
-      expect(reminders[1].scheduledAt, DateTime(2026, 11, 20, 21, 0));
-
-      expect(reminders[2].id, 1500);
-      expect(reminders[2].isDayBefore, isTrue);
-      expect(reminders[2].scheduledAt, DateTime(2026, 11, 21, 20, 0));
-      expect(reminders[2].title, contains('Upcoming tomorrow'));
-
-      expect(reminders[3].id, 1502);
-      expect(reminders[3].isCustomTime, isTrue);
-      expect(reminders[3].scheduledAt, DateTime(2026, 11, 22, 10, 0));
-      expect(reminders[3].title, contains('Reminder: Class Test'));
-
-      expect(reminders[4].id, 1501);
-      expect(reminders[4].isDayBefore, isFalse);
-      expect(reminders[4].scheduledAt, DateTime(2026, 11, 22, 21, 0));
-      expect(reminders[4].title, contains('Mark task complete'));
-    });
-
-    test('schedules 2 future alerts when today reminder windows have passed', () {
-      final reminders = NotificationScheduleCalculator.compute(
-        taskNoDueTime,
-        settings,
-        now: DateTime(2026, 11, 20, 22, 0),
-      );
-
-      expect(reminders.length, 2);
-      expect(reminders[0].scheduledAt, DateTime(2026, 11, 21, 20, 0));
-      expect(reminders[1].scheduledAt, DateTime(2026, 11, 22, 21, 0));
+      expect(reminders, hasLength(1));
+      expect(reminders.first.id, 500 * 3 + 2);
+      expect(reminders.first.isCustomTime, isTrue);
+      expect(reminders.first.isDayBefore, isFalse);
+      expect(reminders.first.scheduledAt, DateTime(2026, 11, 25, 10, 0));
+      expect(reminders.first.title, 'Reminder: Class Test');
     });
 
     test(
-        'fires Day-Before Reminder today for tasks due today when set to an upcoming time today',
+        'task WITHOUT custom time schedules Day-Before ONLY on D-1 and End-of-Day ONLY on D (never today for future dates)',
+        () {
+      // On Nov 22 at 16:55, a MID Exam due on Nov 25 must NOT fire at 17:00 today.
+      final remindersFromEarlierDay = NotificationScheduleCalculator.compute(
+        taskNoCustomTime,
+        settings,
+        now: DateTime(2026, 11, 22, 16, 55),
+      );
+
+      expect(remindersFromEarlierDay, hasLength(2));
+      expect(
+        remindersFromEarlierDay.any((r) => r.scheduledAt.day == 22),
+        isFalse,
+      );
+      expect(remindersFromEarlierDay[0].id, 501 * 3);
+      expect(remindersFromEarlierDay[0].isDayBefore, isTrue);
+      expect(
+        remindersFromEarlierDay[0].scheduledAt,
+        DateTime(2026, 11, 24, 17, 0),
+      );
+      expect(remindersFromEarlierDay[0].title, 'Upcoming tomorrow: Assignment 01');
+
+      expect(remindersFromEarlierDay[1].id, 501 * 3 + 1);
+      expect(remindersFromEarlierDay[1].isDayBefore, isFalse);
+      expect(
+        remindersFromEarlierDay[1].scheduledAt,
+        DateTime(2026, 11, 25, 22, 0),
+      );
+      expect(
+        remindersFromEarlierDay[1].title,
+        'Mark task complete: Assignment 01',
+      );
+    });
+
+    test(
+        'task due today without custom time skips past yesterday Day-Before and schedules ONLY today End-of-Day',
         () {
       final todayTask = TaskItem(
-        id: 'task-due-today',
+        id: 'task-today',
         notificationBaseId: 503,
         title: 'Lab Report',
-        dueDate: DateTime(2026, 11, 21),
-        createdAt: DateTime(2026, 11, 21),
-      );
-      const customTodaySettings = ReminderSettings(
-        enabled: true,
-        dayBeforeHour: 19,
-        dayBeforeMinute: 35,
-        endOfDayHour: 22,
-        endOfDayMinute: 0,
+        dueDate: DateTime(2026, 11, 22),
+        createdAt: DateTime(2026, 11, 20),
       );
 
       final reminders = NotificationScheduleCalculator.compute(
         todayTask,
-        customTodaySettings,
-        now: DateTime(2026, 11, 21, 19, 33),
-      );
-
-      expect(reminders.length, 2);
-      expect(reminders[0].isDayBefore, isTrue);
-      expect(reminders[0].scheduledAt, DateTime(2026, 11, 21, 19, 35));
-      expect(reminders[0].title, 'Upcoming today: Lab Report');
-      expect(reminders[0].body, contains('Due today'));
-      expect(reminders[1].scheduledAt, DateTime(2026, 11, 21, 22, 0));
-    });
-
-    test(
-        'fires Custom reminder time and End-of-Day Check-In today for tomorrow task when set to upcoming times today',
-        () {
-      final tomorrowTask = TaskItem(
-        id: 'task-tomorrow',
-        notificationBaseId: 504,
-        title: 'Class Test',
-        dueDate: DateTime(2026, 11, 22),
-        dueHour: 19,
-        dueMinute: 35,
-        createdAt: DateTime(2026, 11, 21),
-      );
-      const upcomingTodaySettings = ReminderSettings(
-        enabled: true,
-        dayBeforeHour: 16,
-        dayBeforeMinute: 0,
-        endOfDayHour: 19,
-        endOfDayMinute: 36,
-      );
-
-      final reminders = NotificationScheduleCalculator.compute(
-        tomorrowTask,
-        upcomingTodaySettings,
-        now: DateTime(2026, 11, 21, 19, 33),
-      );
-
-      expect(
-        reminders.where((r) => r.scheduledAt.day == 21 && r.isCustomTime),
-        hasLength(1),
-      );
-      expect(
-        reminders
-            .where((r) => r.scheduledAt == DateTime(2026, 11, 21, 19, 36))
-            .single
-            .title,
-        'Mark task complete: Class Test',
-      );
-      expect(
-        reminders.where((r) => r.scheduledAt.day == 22),
-        hasLength(2),
-      );
-    });
-
-    test('schedules reminders today for overdue uncompleted tasks', () {
-      final overdueTask = TaskItem(
-        id: 'task-overdue',
-        notificationBaseId: 505,
-        title: 'Overdue Assignment',
-        dueDate: DateTime(2026, 11, 19),
-        dueHour: 19,
-        dueMinute: 45,
-        createdAt: DateTime(2026, 11, 18),
-      );
-
-      final reminders = NotificationScheduleCalculator.compute(
-        overdueTask,
         settings,
-        now: DateTime(2026, 11, 21, 19, 30),
+        now: DateTime(2026, 11, 22, 16, 55),
       );
 
-      expect(reminders.length, 3);
-      expect(reminders[0].scheduledAt, DateTime(2026, 11, 21, 19, 45));
-      expect(reminders[0].isCustomTime, isTrue);
-      expect(reminders[1].scheduledAt, DateTime(2026, 11, 21, 20, 0));
-      expect(reminders[1].isDayBefore, isTrue);
-      expect(reminders[2].scheduledAt, DateTime(2026, 11, 21, 21, 0));
+      expect(reminders, hasLength(1));
+      expect(reminders.first.id, 503 * 3 + 1);
+      expect(reminders.first.isDayBefore, isFalse);
+      expect(reminders.first.isCustomTime, isFalse);
+      expect(reminders.first.scheduledAt, DateTime(2026, 11, 22, 22, 0));
     });
 
     test(
-        'never skips custom task reminder when dueTime matches End-of-Day Check-In',
+        'task due today with custom time in current minute (0-59s) fires 1 custom alert 5s ahead and no defaults',
         () {
-      final matchingTask = TaskItem(
-        id: 'task-matching-time',
-        notificationBaseId: 506,
-        title: 'Submit Project',
-        dueDate: DateTime(2026, 11, 22),
-        dueHour: 22,
-        dueMinute: 0,
-        createdAt: DateTime(2026, 11, 21),
-      );
-
-      final reminders = NotificationScheduleCalculator.compute(
-        matchingTask,
-        const ReminderSettings(),
-        now: DateTime(2026, 11, 22, 18, 0),
-      );
-
-      expect(reminders.length, 2);
-      expect(reminders[0].isCustomTime, isTrue);
-      expect(reminders[0].id, 506 * 3 + 2);
-      expect(reminders[0].scheduledAt, DateTime(2026, 11, 22, 22, 0));
-      expect(reminders[1].isCustomTime, isFalse);
-      expect(reminders[1].isDayBefore, isFalse);
-      expect(reminders[1].id, 506 * 3 + 1);
-      expect(reminders[1].scheduledAt, DateTime(2026, 11, 22, 22, 0));
-    });
-
-    test('fires current-minute reminder in 5s across full 0-59s window', () {
-      final todayTask = TaskItem(
-        id: 'task-today',
-        notificationBaseId: 502,
+      final todayCustom = TaskItem(
+        id: 'task-custom-now',
+        notificationBaseId: 504,
         title: 'Quick Test',
         dueDate: DateTime(2026, 11, 22),
         dueHour: 17,
@@ -226,15 +126,66 @@ void main() {
       );
 
       final reminders = NotificationScheduleCalculator.compute(
-        todayTask,
+        todayCustom,
         const ReminderSettings(),
         now: DateTime(2026, 11, 22, 17, 58, 58),
       );
 
-      expect(reminders.length, 2);
-      expect(reminders[0].isCustomTime, isTrue);
-      expect(reminders[0].scheduledAt, DateTime(2026, 11, 22, 17, 59, 3));
-      expect(reminders[1].scheduledAt, DateTime(2026, 11, 22, 22, 0));
+      expect(reminders, hasLength(1));
+      expect(reminders.first.isCustomTime, isTrue);
+      expect(reminders.first.id, 504 * 3 + 2);
+      expect(reminders.first.scheduledAt, DateTime(2026, 11, 22, 17, 59, 3));
+    });
+
+    test('overdue uncompleted, completed, and disabled tasks return empty list',
+        () {
+      final overdueDefault = TaskItem(
+        id: 'overdue-1',
+        notificationBaseId: 505,
+        title: 'Overdue Quiz',
+        dueDate: DateTime(2026, 11, 20),
+        createdAt: DateTime(2026, 11, 18),
+      );
+      final overdueCustom = overdueDefault.copyWith(
+        dueHour: 20,
+        dueMinute: 0,
+      );
+
+      expect(
+        NotificationScheduleCalculator.compute(
+          overdueDefault,
+          settings,
+          now: DateTime(2026, 11, 22, 10, 0),
+        ),
+        isEmpty,
+      );
+      expect(
+        NotificationScheduleCalculator.compute(
+          overdueCustom,
+          settings,
+          now: DateTime(2026, 11, 22, 10, 0),
+        ),
+        isEmpty,
+      );
+
+      final completed = taskNoCustomTime.copyWith(isCompleted: true);
+      expect(
+        NotificationScheduleCalculator.compute(
+          completed,
+          settings,
+          now: DateTime(2026, 11, 22, 10, 0),
+        ),
+        isEmpty,
+      );
+
+      expect(
+        NotificationScheduleCalculator.compute(
+          taskNoCustomTime,
+          settings.copyWith(enabled: false),
+          now: DateTime(2026, 11, 22, 10, 0),
+        ),
+        isEmpty,
+      );
     });
 
     test('derived notification IDs always remain positive 31-bit Android IDs',
@@ -244,8 +195,6 @@ void main() {
         notificationBaseId: 0x0FFFFFFF,
         title: 'ID Bounds',
         dueDate: DateTime(2026, 11, 25),
-        dueHour: 23,
-        dueMinute: 0,
         createdAt: DateTime(2026, 11, 20),
       );
       final reminders = NotificationScheduleCalculator.compute(
@@ -254,31 +203,11 @@ void main() {
         now: DateTime(2026, 11, 20, 10, 0),
       );
 
+      expect(reminders, hasLength(2));
       for (final r in reminders) {
         expect(r.id, greaterThan(0));
         expect(r.id, lessThanOrEqualTo(0x7FFFFFFF));
       }
-    });
-
-    test('returns no reminders when task is completed or disabled', () {
-      final completed = taskWithDueTime.copyWith(isCompleted: true);
-      expect(
-        NotificationScheduleCalculator.compute(
-          completed,
-          settings,
-          now: DateTime(2026, 11, 20, 19, 0),
-        ),
-        isEmpty,
-      );
-
-      expect(
-        NotificationScheduleCalculator.compute(
-          taskWithDueTime,
-          settings.copyWith(enabled: false),
-          now: DateTime(2026, 11, 20, 19, 0),
-        ),
-        isEmpty,
-      );
     });
 
     test('default settings use 4:00 PM day-before and 10:00 PM due-day', () {
@@ -289,15 +218,14 @@ void main() {
       expect(defaults.endOfDayMinute, 0);
 
       final reminders = NotificationScheduleCalculator.compute(
-        taskNoDueTime,
+        taskNoCustomTime,
         defaults,
-        now: DateTime(2026, 11, 21, 10, 0),
+        now: DateTime(2026, 11, 22, 10, 0),
       );
 
-      expect(reminders.length, 3);
-      expect(reminders[0].scheduledAt, DateTime(2026, 11, 21, 16, 0));
-      expect(reminders[1].scheduledAt, DateTime(2026, 11, 21, 22, 0));
-      expect(reminders[2].scheduledAt, DateTime(2026, 11, 22, 22, 0));
+      expect(reminders, hasLength(2));
+      expect(reminders[0].scheduledAt, DateTime(2026, 11, 24, 16, 0));
+      expect(reminders[1].scheduledAt, DateTime(2026, 11, 25, 22, 0));
     });
   });
 }

@@ -43,12 +43,6 @@ abstract final class NotificationScheduleCalculator {
     return null;
   }
 
-  static int _slotOrder(ScheduledReminder r) {
-    if (r.isDayBefore) return 0;
-    if (r.isCustomTime) return 1;
-    return 2;
-  }
-
   static List<ScheduledReminder> compute(
     TaskItem task,
     ReminderSettings settings, {
@@ -59,154 +53,68 @@ abstract final class NotificationScheduleCalculator {
     }
 
     final refNow = now ?? DateTime.now();
-    final today = DateTime(refNow.year, refNow.month, refNow.day);
     final safeBase = task.notificationBaseId & 0x0FFFFFFF;
-    final todayExtraBase = 0x40000000 + safeBase * 3;
     final dueDay = DateTime(
       task.dueDate.year,
       task.dueDate.month,
       task.dueDate.day,
     );
-    final dayBeforeDate = dueDay.subtract(const Duration(days: 1));
-    final primaryDayBeforeDate =
-        dayBeforeDate.isBefore(today) ? today : dayBeforeDate;
-    final primaryDueDate = dueDay.isBefore(today) ? today : dueDay;
 
     final coursePrefix = task.courseOrCategory.trim().isNotEmpty
         ? '${task.courseOrCategory.trim()} • '
         : '';
-    final dueTimeSuffix = task.formattedDueTime != null
-        ? ' at ${task.formattedDueTime}'
-        : '';
+
+    if (task.hasDueTime) {
+      final taskTimeTarget = DateTime(
+        dueDay.year,
+        dueDay.month,
+        dueDay.day,
+        task.dueHour!,
+        task.dueMinute!,
+      );
+      final effectiveTaskTime = _effectiveFutureTime(taskTimeTarget, refNow);
+      if (effectiveTaskTime == null) {
+        return const [];
+      }
+      return [
+        ScheduledReminder(
+          id: safeBase * 3 + 2,
+          scheduledAt: effectiveTaskTime,
+          title: 'Reminder: ${task.title}',
+          body: '${coursePrefix}Scheduled for ${task.formattedDueTime}.',
+          isDayBefore: false,
+          isCustomTime: true,
+        ),
+      ];
+    }
 
     final reminders = <ScheduledReminder>[];
 
-    // 1. Day-Before / Advance Reminder.
-    if (primaryDayBeforeDate.isAfter(today)) {
-      final todayAdvanceTarget = DateTime(
-        today.year,
-        today.month,
-        today.day,
-        settings.dayBeforeHour,
-        settings.dayBeforeMinute,
-      );
-      final effectiveTodayAdvance =
-          _effectiveFutureTime(todayAdvanceTarget, refNow);
-      if (effectiveTodayAdvance != null) {
-        reminders.add(
-          ScheduledReminder(
-            id: todayExtraBase,
-            scheduledAt: effectiveTodayAdvance,
-            title: 'Upcoming: ${task.title}',
-            body: '${coursePrefix}Scheduled reminder$dueTimeSuffix.',
-            isDayBefore: true,
-          ),
-        );
-      }
-    }
-
+    final dayBeforeDate = dueDay.subtract(const Duration(days: 1));
     final dayBeforeTarget = DateTime(
-      primaryDayBeforeDate.year,
-      primaryDayBeforeDate.month,
-      primaryDayBeforeDate.day,
+      dayBeforeDate.year,
+      dayBeforeDate.month,
+      dayBeforeDate.day,
       settings.dayBeforeHour,
       settings.dayBeforeMinute,
     );
     final effectiveDayBefore = _effectiveFutureTime(dayBeforeTarget, refNow);
     if (effectiveDayBefore != null) {
-      final isTodayOrOverdue =
-          primaryDayBeforeDate == today && !dueDay.isAfter(today);
       reminders.add(
         ScheduledReminder(
           id: safeBase * 3,
           scheduledAt: effectiveDayBefore,
-          title: isTodayOrOverdue
-              ? 'Upcoming today: ${task.title}'
-              : 'Upcoming tomorrow: ${task.title}',
-          body: isTodayOrOverdue
-              ? '${coursePrefix}Due today$dueTimeSuffix.'
-              : '${coursePrefix}Due tomorrow$dueTimeSuffix.',
+          title: 'Upcoming tomorrow: ${task.title}',
+          body: '${coursePrefix}Due tomorrow.',
           isDayBefore: true,
         ),
       );
     }
 
-    // 2. Custom Task Time Reminder (never skipped even if matching endOfDay).
-    if (task.hasDueTime) {
-      if (primaryDueDate.isAfter(today)) {
-        final todayTaskTarget = DateTime(
-          today.year,
-          today.month,
-          today.day,
-          task.dueHour!,
-          task.dueMinute!,
-        );
-        final effectiveTodayTaskTime =
-            _effectiveFutureTime(todayTaskTarget, refNow);
-        if (effectiveTodayTaskTime != null) {
-          reminders.add(
-            ScheduledReminder(
-              id: todayExtraBase + 2,
-              scheduledAt: effectiveTodayTaskTime,
-              title: 'Reminder: ${task.title}',
-              body: '${coursePrefix}Scheduled for ${task.formattedDueTime}.',
-              isDayBefore: false,
-              isCustomTime: true,
-            ),
-          );
-        }
-      }
-
-      final taskTimeTarget = DateTime(
-        primaryDueDate.year,
-        primaryDueDate.month,
-        primaryDueDate.day,
-        task.dueHour!,
-        task.dueMinute!,
-      );
-      final effectiveTaskTime = _effectiveFutureTime(taskTimeTarget, refNow);
-      if (effectiveTaskTime != null) {
-        reminders.add(
-          ScheduledReminder(
-            id: safeBase * 3 + 2,
-            scheduledAt: effectiveTaskTime,
-            title: 'Reminder: ${task.title}',
-            body: '${coursePrefix}Scheduled for ${task.formattedDueTime}.',
-            isDayBefore: false,
-            isCustomTime: true,
-          ),
-        );
-      }
-    }
-
-    // 3. End-of-Day Check-In.
-    if (primaryDueDate.isAfter(today)) {
-      final todayEndTarget = DateTime(
-        today.year,
-        today.month,
-        today.day,
-        settings.endOfDayHour,
-        settings.endOfDayMinute,
-      );
-      final effectiveTodayEnd = _effectiveFutureTime(todayEndTarget, refNow);
-      if (effectiveTodayEnd != null) {
-        reminders.add(
-          ScheduledReminder(
-            id: todayExtraBase + 1,
-            scheduledAt: effectiveTodayEnd,
-            title: 'Mark task complete: ${task.title}',
-            body:
-                '${coursePrefix}End-of-day check-in — tap to cross off if done.',
-            isDayBefore: false,
-          ),
-        );
-      }
-    }
-
     final endOfDayTarget = DateTime(
-      primaryDueDate.year,
-      primaryDueDate.month,
-      primaryDueDate.day,
+      dueDay.year,
+      dueDay.month,
+      dueDay.day,
       settings.endOfDayHour,
       settings.endOfDayMinute,
     );
@@ -223,12 +131,6 @@ abstract final class NotificationScheduleCalculator {
         ),
       );
     }
-
-    reminders.sort((a, b) {
-      final timeCmp = a.scheduledAt.compareTo(b.scheduledAt);
-      if (timeCmp != 0) return timeCmp;
-      return _slotOrder(a).compareTo(_slotOrder(b));
-    });
 
     return reminders;
   }

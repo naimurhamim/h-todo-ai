@@ -15,6 +15,11 @@ import 'package:h_todo_ai/services/cloud_backup_service.dart';
 import 'package:h_todo_ai/services/notification_service.dart';
 import 'package:h_todo_ai/services/security_service.dart';
 import 'package:h_todo_ai/services/storage_service.dart';
+import 'package:h_todo_ai/providers/task_provider.dart';
+import 'package:h_todo_ai/widgets/notifications_sheet.dart';
+import 'package:h_todo_ai/widgets/task_card.dart';
+import 'package:h_todo_ai/widgets/task_detail_sheet.dart';
+import 'package:provider/provider.dart';
 
 void main() {
   setUp(() {
@@ -282,6 +287,57 @@ void main() {
     expect(find.text('Notifications'), findsOneWidget);
     expect(find.text('Plan Your Day'), findsNothing);
     expect(find.text('Class Test 01'), findsWidgets);
+
+    final sheetFinder = find.byType(NotificationsSheet);
+    expect(sheetFinder, findsOneWidget);
+
+    // Tapping left icon or notification card stays read-only (does not complete, edit, or delete).
+    await tester.tap(
+      find
+          .descendant(
+            of: sheetFinder,
+            matching: find.byIcon(taskTypeIcon(TaskType.classTest)),
+          )
+          .first,
+    );
+    await tester.pumpAndSettle();
+    expect(sheetFinder, findsOneWidget);
+    expect(find.byType(TaskDetailSheet), findsNothing);
+    expect(
+      find.descendant(of: sheetFinder, matching: find.text('Class Test 01')),
+      findsOneWidget,
+    );
+
+    await tester.tap(
+      find.descendant(of: sheetFinder, matching: find.text('Class Test 01')),
+    );
+    await tester.pumpAndSettle();
+    expect(sheetFinder, findsOneWidget);
+    expect(find.byType(TaskDetailSheet), findsNothing);
+    expect(
+      find.descendant(of: sheetFinder, matching: find.text('Class Test 01')),
+      findsOneWidget,
+    );
+
+    // Completing task externally auto-removes it from NotificationsSheet; uncompleting restores it.
+    final taskProvider = Provider.of<TaskProvider>(
+      tester.element(sheetFinder),
+      listen: false,
+    );
+    await taskProvider.toggleTaskComplete('t-notif-1');
+    await tester.pumpAndSettle();
+    expect(find.text('All caught up'), findsOneWidget);
+    expect(
+      find.descendant(of: sheetFinder, matching: find.text('Class Test 01')),
+      findsNothing,
+    );
+
+    await taskProvider.toggleTaskComplete('t-notif-1');
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(of: sheetFinder, matching: find.text('Class Test 01')),
+      findsOneWidget,
+    );
 
     await tester.tap(find.byTooltip('Close'));
     await tester.pumpAndSettle();

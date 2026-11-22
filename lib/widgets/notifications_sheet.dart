@@ -10,20 +10,17 @@ import '../services/notification_service.dart';
 import '../theme/app_tokens.dart';
 import 'glass_surface.dart';
 import 'task_card.dart';
-import 'task_detail_sheet.dart';
 
-/// Frosted notifications modal showing upcoming deadlines, remaining days, and alert times.
+/// Frosted read-only notifications modal showing upcoming deadlines, remaining days, and alert times.
 class NotificationsSheet extends StatelessWidget {
-  const NotificationsSheet({super.key, required this.hostContext});
-
-  final BuildContext hostContext;
+  const NotificationsSheet({super.key});
 
   static Future<void> show(BuildContext context) {
     return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (_) => NotificationsSheet(hostContext: context),
+      builder: (_) => const NotificationsSheet(),
     );
   }
 
@@ -215,38 +212,24 @@ class NotificationsSheet extends StatelessWidget {
                       blur: 0,
                       borderColor:
                           isOverdue ? colors.danger : colors.glassBorder,
-                      onTap: () {
-                        Navigator.of(context).pop();
-                        if (hostContext.mounted) {
-                          TaskDetailSheet.show(hostContext, task.id);
-                        }
-                      },
                       padding: const EdgeInsets.all(AppSpacing.md),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          InkResponse(
-                            onTap: () =>
-                                taskProvider.toggleTaskComplete(task.id),
-                            radius: 22,
-                            child: Tooltip(
-                              message: 'Mark ${task.title} complete',
-                              child: Container(
-                                width: 38,
-                                height: 38,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: colors.surfaceSubtle,
-                                  border: Border.all(
-                                    color: colors.glassBorder,
-                                  ),
-                                ),
-                                child: Icon(
-                                  taskTypeIcon(task.type),
-                                  size: AppIconSize.md,
-                                  color: colors.textPrimary,
-                                ),
+                          Container(
+                            width: 38,
+                            height: 38,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: colors.surfaceSubtle,
+                              border: Border.all(
+                                color: colors.glassBorder,
                               ),
+                            ),
+                            child: Icon(
+                              taskTypeIcon(task.type),
+                              size: AppIconSize.md,
+                              color: colors.textPrimary,
                             ),
                           ),
                           const SizedBox(width: AppSpacing.md),
