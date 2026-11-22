@@ -1,17 +1,27 @@
 # H-TODO AI
 
-An AI-powered academic and personal task planner built with Flutter, featuring natural-language schedule parsing in Bengali and English, Light and Dark glassmorphism UI, dual deadline reminders, privacy app lock, and Firebase cloud sync.
+An AI-powered academic and personal task planner built with Flutter, featuring natural-language schedule parsing in English, Bengali (`বাংলা`), and Banglish, Light and Dark glassmorphism UI, a smart recurring/bulk rule engine, strict date-based exact alarms, biometric app lock, and private Google Drive sync.
+
+- **Interactive Showcase Website:** https://aitodo.naimurrashid.dev
+- **Download Latest Android APK:** https://github.com/naimurhamim/h-todo-ai/releases/latest
 
 ## Features
 
-- **AI Schedule Auto-Plan:** Paste class notices, assignment deadlines, exam schedules, or syllabi in Bengali (`বাংলা`), English, or Banglish to extract structured tasks and syllabus checklists automatically.
-- **Multi-Provider AI Support:** Bring your own API key for Google Gemini, Groq, xAI Grok, OpenRouter, or a custom OpenAI-compatible endpoint, with live model discovery and automatic fallback.
-- **Smart Duplicate Handling:** Detects repeated task notices on matching dates/times, skips exact duplicates, and merges newly added syllabus items or notes into existing tasks.
-- **Light & Dark Glassmorphism UI:** Smooth frosted cards, ambient backdrops, bottom-anchored AI chat with per-message copy, progress rings, and quick theme switching.
-- **Dual Local Notifications:** Automatic reminders at `4:00 PM` the day before a deadline and `10:00 PM` on the due day (customizable in Profile -> Reminders), plus an Overview Notifications sheet showing countdowns.
+- **Multilingual AI Auto-Plan:** Paste raw class notices, assignment deadlines, exam schedules, or syllabi in English, Bengali (`বাংলা`), or Banglish to extract structured tasks and syllabus checklists automatically, with smart duplicate detection and syllabus merging.
+- **Smart Recurring & Bulk Rule Engine:** Generate daily, every-N-days, weekly, or monthly routines (up to **400 tasks / 366 days** per command in ~1–2 seconds locally without free API token timeouts), plus natural-language `bulk_delete`, `bulk_reschedule`, `bulk_update`, and `bulk_complete` actions with an instant top floating `Undo / OK` bar.
+- **Multi-Provider BYOK AI Support:** Bring your own free API key for **Groq (Recommended • Fast)**, Google Gemini, OpenRouter, xAI Grok, or any custom OpenAI-compatible endpoint, complete with a built-in expandable `API Key Guidebook`, live model discovery, and automatic fallback.
+- **Strict Date-Based Exact Alarms & 99-Alarm Rolling Window:** Default reminders fire at `4:00 PM` the day before and `10:00 PM` on the due day (customizable in Profile -> Reminders). Tasks with a custom due time disable default alerts automatically so alarms never double-fire. Respects Android OS alarm caps by scheduling the soonest 99 exact alarms chronologically and auto-rolling on launch and resume, backed by a read-only `Notifications` drawer.
+- **Light & Dark Glassmorphism UI:** Frosted glass cards, ambient backdrops, interactive `Overview` (7-day strip, live progress ring, Next Up countdown), `Plan Your Day` (Week Grid & lazy-loaded Full Timeline views), `AI Auto-Plan`, and `Profile`.
 - **Privacy & App Lock:** Optional 4-digit PIN and fingerprint/biometric unlock on app launch and resume.
-- **Private Google Drive Sync & JSON Export/Import:** Automatic single-file backup to each user's private Google Drive `appDataFolder` on every change (with one-time migration from legacy Firebase backups) plus portable offline JSON export and merge/replace import.
-- **In-App Update Checker:** Verifies the latest GitHub Release from Profile -> About -> Check for Updates.
+- **Private Google Drive Sync & Offline JSON Backup:** Automatic single-file sync to each user's private Google Drive `appDataFolder` with offline delete tombstones (`deletedTaskIds`) so deleted tasks stay deleted across devices, plus portable JSON Export and Merge/Replace Import.
+- **In-App Update Checker:** Verifies the latest GitHub Release and renders release notes directly inside Profile -> About -> Check for Updates.
+
+## Interactive Showcase Website (`docs/`)
+
+The `docs/` directory hosts the responsive GitHub Pages showcase for `H-TODO AI` at `https://aitodo.naimurrashid.dev` (`docs/CNAME`), featuring:
+- Interactive desktop and mobile glassmorphism phone simulator covering all 4 app screens (`Overview`, `Plan Your Day`, `AI Auto-Plan`, `Profile & Security`).
+- Annotated curved SVG arrow callouts (desktop) and numbered interactive hotspot pins (mobile/tablet) explaining every feature.
+- Bilingual `EN / বাংলা` switch, synced Light/Dark Glass toggle, live GitHub Releases APK download integration, and developer details.
 
 ## Local Setup
 
