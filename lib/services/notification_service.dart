@@ -179,6 +179,12 @@ class NotificationService {
   static const _channelName = 'Schedule Reminders';
   static const _channelDescription =
       'Day-before alerts, task deadline alerts, and end-of-day check-ins';
+  static const _updateChannelId = 'htodo_app_updates_v1';
+  static const _updateChannelName = 'App Updates';
+  static const _updateChannelDescription =
+      'One-time alerts when a newer H-TODO AI version is available';
+  static const int _updateNotificationId = 999001;
+  static const String updatePayload = 'app_update';
   static const int _testScheduledId = 999998;
   static const int _testInstantId = 999999;
 
@@ -189,6 +195,27 @@ class NotificationService {
   Future<void>? _initFuture;
   bool _permissionRequestInFlight = false;
   String? _lastScheduledSignature;
+  void Function(String? payload)? _onNotificationTap;
+  String? _pendingLaunchPayload;
+
+  void setOnNotificationTap(void Function(String? payload)? handler) {
+    _onNotificationTap = handler;
+    final pending = _pendingLaunchPayload;
+    if (handler != null && pending != null) {
+      _pendingLaunchPayload = null;
+      handler(pending);
+    }
+  }
+
+  void _handleNotificationPayload(String? payload) {
+    if (payload == null || payload.isEmpty) return;
+    final handler = _onNotificationTap;
+    if (handler != null) {
+      handler(payload);
+    } else {
+      _pendingLaunchPayload = payload;
+    }
+  }
 
   bool get _supportsPlatformScheduling {
     if (kIsWeb) return false;
@@ -225,8 +252,21 @@ class NotificationService {
         macOS: darwinSettings,
       );
 
-      await _plugin.initialize(settings);
+      await _plugin.initialize(
+        settings,
+        onDidReceiveNotificationResponse: (details) =>
+            _handleNotificationPayload(details.payload),
+      );
       _platformReady = true;
+
+      try {
+        final launchDetails = await _plugin.getNotificationAppLaunchDetails();
+        if (launchDetails?.didNotificationLaunchApp == true) {
+          _handleNotificationPayload(
+            launchDetails?.notificationResponse?.payload,
+          );
+        }
+      } catch (_) {}
     } catch (e) {
       _platformReady = false;
       debugPrint('NotificationService.init warning: $e');
@@ -249,6 +289,15 @@ class NotificationService {
           importance: Importance.max,
           playSound: true,
           enableVibration: true,
+        ),
+      );
+      await androidImpl?.createNotificationChannel(
+        const AndroidNotificationChannel(
+          _updateChannelId,
+          _updateChannelName,
+          description: _updateChannelDescription,
+          importance: Importance.defaultImportance,
+          playSound: true,
         ),
       );
     } catch (e) {
@@ -556,5 +605,50 @@ class NotificationService {
     } catch (e) {
       return 'Could not show notification: $e';
     }
+  }
+
+  /// Displays a single quiet update notification linking back to Check for Updates.
+  Future<void> showUpdateNotification({required String latestVersion}) async {
+    await init();
+    if (!_supportsPlatformScheduling || !_platformReady) return;
+    try {
+      const details = NotificationDetails(
+        android: AndroidNotificationDetails(
+          _updateChannelId,
+          _updateChannelName,
+          channelDescription: _updateChannelDescription,
+          icon: '@mipmap/ic_launcher',
+          importance: Importance.defaultImportance,
+          priority: Priority.defaultPriority,
+          visibility: NotificationVisibility.public,
+        ),
+        iOS: DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: true,
+        ),
+        macOS: DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: true,
+        ),
+      );
+      await _plugin.show(
+        _updateNotificationId,
+        'H-TODO AI v$latestVersion Available',
+        'Tap to open Profile -> Check for Updates.',
+        details,
+        payload: updatePayload,
+      );
+    } catch (e) {
+      debugPrint('showUpdateNotification warning: $e');
+    }
+  }
+
+  Future<void> cancelUpdateNotification() async {
+    if (!_supportsPlatformScheduling || !_platformReady) return;
+    try {
+      await _plugin.cancel(_updateNotificationId);
+    } catch (_) {}
   }
 }

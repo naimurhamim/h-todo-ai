@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 
 import 'providers/ai_settings_provider.dart';
@@ -8,6 +9,7 @@ import 'providers/chat_provider.dart';
 import 'providers/cloud_sync_provider.dart';
 import 'providers/security_provider.dart';
 import 'providers/task_provider.dart';
+import 'providers/update_provider.dart';
 import 'screens/app_lock_screen.dart';
 import 'screens/home_shell.dart';
 import 'screens/splash_screen.dart';
@@ -27,6 +29,9 @@ class HTodoApp extends StatelessWidget {
     this.parser,
     this.cloudBackup,
     this.securityService,
+    this.updateHttpClient,
+    this.currentVersionOverride,
+    this.autoCheckUpdates,
     this.skipSplash = false,
   });
 
@@ -35,6 +40,9 @@ class HTodoApp extends StatelessWidget {
   final AiParserService? parser;
   final CloudBackupService? cloudBackup;
   final SecurityService? securityService;
+  final http.Client? updateHttpClient;
+  final String? currentVersionOverride;
+  final bool? autoCheckUpdates;
   final bool skipSplash;
 
   @override
@@ -80,6 +88,16 @@ class HTodoApp extends StatelessWidget {
             aiSettings: ctx.read<AiSettingsProvider>(),
             tasks: ctx.read<TaskProvider>(),
             chat: ctx.read<ChatProvider>(),
+          ),
+        ),
+        ChangeNotifierProvider<UpdateProvider>(
+          lazy: false,
+          create: (_) => UpdateProvider(
+            storage: storage,
+            notifications: notifications,
+            httpClient: updateHttpClient,
+            currentVersionOverride: currentVersionOverride,
+            autoCheckOnStart: autoCheckUpdates ?? backupService.isAvailable,
           ),
         ),
       ],

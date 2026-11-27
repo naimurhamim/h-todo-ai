@@ -3,6 +3,9 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:h_todo_ai/app.dart';
@@ -498,5 +501,209 @@ void main() {
 
     expect(find.text('Export JSON'), findsOneWidget);
     expect(find.text('Import JSON'), findsOneWidget);
+  });
+
+  testWidgets(
+      'Overview Upcoming Tasks switches to Tomorrow short list when today clears, and Plan week strip swipes horizontally',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final tomorrow = today.add(const Duration(days: 1));
+    final nextWeekSameWeekday = today.add(const Duration(days: 7));
+
+    final todayTask = TaskItem(
+      id: 't-up-today',
+      notificationBaseId: 701,
+      title: 'Today Task Alpha',
+      type: TaskType.assignment,
+      dueDate: today,
+      dueHour: 23,
+      dueMinute: 59,
+      createdAt: now,
+    );
+    final tmrTask1 = TaskItem(
+      id: 't-up-tmr-1',
+      notificationBaseId: 702,
+      title: 'Tomorrow Quiz Beta',
+      type: TaskType.classTest,
+      dueDate: tomorrow,
+      dueHour: 10,
+      dueMinute: 0,
+      createdAt: now,
+    );
+    final tmrTask2 = TaskItem(
+      id: 't-up-tmr-2',
+      notificationBaseId: 703,
+      title: 'Tomorrow Lab Gamma',
+      type: TaskType.exam,
+      dueDate: tomorrow,
+      dueHour: 14,
+      dueMinute: 30,
+      createdAt: now,
+    );
+
+    SharedPreferences.setMockInitialValues({
+      'htodo_tasks_v1': jsonEncode([
+        todayTask.toJson(),
+        tmrTask1.toJson(),
+        tmrTask2.toJson(),
+      ]),
+    });
+
+    await tester.pumpWidget(
+      HTodoApp(
+        storage: StorageService(),
+        notifications: NotificationService(),
+        cloudBackup: CloudBackupService.disabled(),
+        securityService: SecurityService.disabled(),
+        skipSplash: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Upcoming Tasks'), findsOneWidget);
+    expect(find.text('Today'), findsOneWidget);
+    expect(find.text('Today Task Alpha'), findsWidgets);
+
+    // Complete today's remaining task -> card automatically displays Tomorrow's short list.
+    final taskProvider = Provider.of<TaskProvider>(
+      tester.element(find.text('Overview')),
+      listen: false,
+    );
+    await taskProvider.toggleTaskComplete('t-up-today');
+    await tester.pumpAndSettle();
+
+    expect(find.text('Tomorrow'), findsOneWidget);
+    expect(find.text('Tomorrow Quiz Beta'), findsWidgets);
+    expect(find.text('Tomorrow Lab Gamma'), findsWidgets);
+
+    // Plan Your Day horizontal week swipe changes selected date by +7 days.
+    await tester.tap(find.bySemanticsLabel('Plan'));
+    await tester.pumpAndSettle();
+    expect(find.text(DateFormat('d MMMM, yyyy').format(today)), findsOneWidget);
+
+    await tester.drag(find.byType(PageView), const Offset(-350, 0));
+    await tester.pumpAndSettle();
+    expect(
+      find.text(DateFormat('d MMMM, yyyy').format(nextWeekSameWeekday)),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+      'Auto-update check detects release, shows bell/top banners, persists single notification, and opens Check for Updates dialog',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    SharedPreferences.setMockInitialValues({});
+    final storage = StorageService();
+    final mockClient = MockClient((request) async {
+      return http.Response(
+        jsonEncode({
+          'tag_name': 'v9.9.9',
+          'body': '## Highlights\n- Smooth 120Hz scrolling',
+          'html_url': 'https://github.com/naimurhamim/h-todo-ai/releases/tag/v9.9.9',
+          'assets': [
+            {
+              'name': 'H-TODO-AI-v9.9.9.apk',
+              'browser_download_url':
+                  'https://github.com/naimurhamim/h-todo-ai/releases/download/v9.9.9/H-TODO-AI-v9.9.9.apk',
+            },
+          ],
+        }),
+        200,
+      );
+    });
+
+    await tester.pumpWidget(
+      HTodoApp(
+        storage: storage,
+        notifications: NotificationService(),
+        cloudBackup: CloudBackupService.disabled(),
+        securityService: SecurityService.disabled(),
+        updateHttpClient: mockClient,
+        currentVersionOverride: '1.1.0',
+        autoCheckUpdates: true,
+        skipSplash: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Update v9.9.9 available'), findsOneWidget);
+    final bellFinder = find.byTooltip('Notifications');
+    expect(
+      find.descendant(of: bellFinder, matching: find.text('1')),
+      findsOneWidget,
+    );
+    expect(await storage.loadLastNotifiedUpdateVersion(), '9.9.9');
+
+    await tester.tap(bellFinder);
+    await tester.pumpAndSettle();
+    expect(find.text('Update Available • v9.9.9'), findsOneWidget);
+
+    await tester.tap(find.text('Update Available • v9.9.9'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Update Available'), findsOneWidget);
+    expect(find.text('Installed: v1.1.0  •  Latest: v9.9.9'), findsOneWidget);
+    expect(find.text('Smooth 120Hz scrolling'), findsOneWidget);
+
+    await tester.tap(find.text('Later'));
+    await tester.pumpAndSettle();
+    expect(find.text('Profile'), findsOneWidget);
+  });
+
+  testWidgets(
+      'Auto-update check stays silent when installed version matches latest release',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    SharedPreferences.setMockInitialValues({});
+    final storage = StorageService();
+    final mockClient = MockClient((request) async {
+      return http.Response(
+        jsonEncode({
+          'tag_name': 'v1.1.0',
+          'body': 'Current build',
+          'html_url': 'https://github.com/naimurhamim/h-todo-ai/releases/latest',
+        }),
+        200,
+      );
+    });
+
+    await tester.pumpWidget(
+      HTodoApp(
+        storage: storage,
+        notifications: NotificationService(),
+        cloudBackup: CloudBackupService.disabled(),
+        securityService: SecurityService.disabled(),
+        updateHttpClient: mockClient,
+        currentVersionOverride: '1.1.0',
+        autoCheckUpdates: true,
+        skipSplash: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Update v1.1.0 available'), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byTooltip('Notifications'),
+        matching: find.text('1'),
+      ),
+      findsNothing,
+    );
+    expect(await storage.loadLastNotifiedUpdateVersion(), isNull);
   });
 }

@@ -47,7 +47,7 @@ class TaskDetailSheet extends StatelessWidget {
       ),
       child: GlassContainer(
         borderRadius: AppRadius.xl,
-        blur: 18,
+        blur: 10,
         elevated: true,
         padding: const EdgeInsets.fromLTRB(
           AppSpacing.lg,

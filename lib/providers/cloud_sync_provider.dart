@@ -5,11 +5,29 @@ import 'package:flutter/foundation.dart';
 import '../models/cloud_backup_payload.dart';
 import '../models/google_account_profile.dart';
 import '../services/cloud_backup_service.dart';
+import '../services/google_drive_backup_client.dart';
 import '../services/local_backup_service.dart';
 import '../services/storage_service.dart';
 import 'ai_settings_provider.dart';
 import 'chat_provider.dart';
 import 'task_provider.dart';
+
+enum SyncBannerKind { loaded, saved, synced, error }
+
+@immutable
+class SyncStatusBanner {
+  const SyncStatusBanner({
+    required this.id,
+    required this.kind,
+    required this.message,
+    this.canRetry = false,
+  });
+
+  final int id;
+  final SyncBannerKind kind;
+  final String message;
+  final bool canRetry;
+}
 
 /// Coordinates cached Google identity, WhatsApp-style private Google Drive
 /// (`appDataFolder`) auto-backup, one-time Firebase migration, and JSON Export/Import.
@@ -53,6 +71,9 @@ class CloudSyncProvider extends ChangeNotifier {
   String? _lastSyncedFingerprint;
   String? _errorMessage;
   String? _migrationNotice;
+  SyncStatusBanner? _statusBanner;
+  int _bannerSeq = 0;
+  bool _disposed = false;
 
   bool get isAvailable => _service.isAvailable;
   bool get isSignedIn => _profile != null;
@@ -65,6 +86,40 @@ class CloudSyncProvider extends ChangeNotifier {
   bool get isSyncing => _isSyncing;
   String? get errorMessage => _errorMessage;
   String? get migrationNotice => _migrationNotice;
+  SyncStatusBanner? get statusBanner => _statusBanner;
+
+  void dismissStatusBanner() {
+    if (_statusBanner == null) return;
+    _statusBanner = null;
+    if (!_disposed) notifyListeners();
+  }
+
+  void _emitBanner(
+    SyncBannerKind kind,
+    String message, {
+    bool canRetry = false,
+  }) {
+    _statusBanner = SyncStatusBanner(
+      id: ++_bannerSeq,
+      kind: kind,
+      message: message,
+      canRetry: canRetry,
+    );
+  }
+
+  String _friendlySyncError(Object error) {
+    if (error is DriveAuthExpiredException) {
+      return 'Google Drive session expired • Tap to reconnect';
+    }
+    final text = error.toString().toLowerCase();
+    if (text.contains('socket') ||
+        text.contains('network') ||
+        text.contains('host lookup') ||
+        text.contains('timed out')) {
+      return 'Drive sync offline • Check connection';
+    }
+    return 'Google Drive sync error • Tap to check';
+  }
 
   Future<void> _initSession() async {
     _profile = await _storage.loadGoogleProfile();
@@ -73,10 +128,13 @@ class CloudSyncProvider extends ChangeNotifier {
       _lastLocalUpdatedAt =
           (await _storage.loadLastUpdatedAt()) ?? _lastLocalUpdatedAt;
     }
+    if (_disposed) return;
     notifyListeners();
 
-    if (!_service.isAvailable) return;
+    // Never auto-sign-in new users who have not opted into Google Drive backup.
+    if (_profile == null || !_service.isAvailable) return;
     await _waitForLocalLoads();
+    if (_disposed || _profile == null) return;
 
     _deletedTaskIds = await _storage.loadDeletedTaskIds();
     if (_lastLocalUpdatedAt.millisecondsSinceEpoch == 0) {
@@ -85,10 +143,21 @@ class CloudSyncProvider extends ChangeNotifier {
     }
 
     final live = await _service.restoreSilentSession();
-    if (live == null) return;
+    if (_disposed || _profile == null) return;
+    if (live == null) {
+      _errorMessage = 'Google session paused. Tap to reconnect.';
+      _emitBanner(
+        SyncBannerKind.error,
+        'Google Drive paused • Tap to reconnect',
+        canRetry: true,
+      );
+      notifyListeners();
+      return;
+    }
 
     _profile = _mergeAccountInfo(existing: _profile, fresh: live);
     await _storage.saveGoogleProfile(_profile);
+    if (_disposed) return;
     notifyListeners();
 
     await _reconcileWithDrive(promptIfNecessary: false);
@@ -174,6 +243,9 @@ class CloudSyncProvider extends ChangeNotifier {
       );
       _deletedTaskIds = await _storage.loadDeletedTaskIds();
       final local = _buildCurrentPayload();
+      final localFingerprintBefore = local.computeContentFingerprint();
+      var loadedFromDrive = false;
+      var uploadedToDrive = false;
 
       if (driveRes.payload != null) {
         var finalPayload = driveRes.payload!;
@@ -185,6 +257,8 @@ class CloudSyncProvider extends ChangeNotifier {
           await _applyPayloadLocally(merged);
           finalPayload = merged;
         }
+        loadedFromDrive =
+            finalPayload.computeContentFingerprint() != localFingerprintBefore;
 
         // Migrate legacy Firebase tasks/keys once if not yet migrated.
         var migratedNow = false;
@@ -194,6 +268,7 @@ class CloudSyncProvider extends ChangeNotifier {
             final withLegacy = legacy.mergeWithLocal(finalPayload);
             await _applyPayloadLocally(withLegacy);
             finalPayload = withLegacy;
+            loadedFromDrive = true;
             migratedNow = true;
           }
         }
@@ -206,6 +281,7 @@ class CloudSyncProvider extends ChangeNotifier {
             knownFileId: fileId,
             promptIfNecessary: promptIfNecessary,
           );
+          uploadedToDrive = true;
         }
 
         if (migratedNow) {
@@ -232,12 +308,14 @@ class CloudSyncProvider extends ChangeNotifier {
         if (legacy != null && !legacy.isMeaningfullyEmpty) {
           initialPayload = legacy.mergeWithLocal(local);
           await _applyPayloadLocally(initialPayload);
+          loadedFromDrive = true;
         }
 
         final createdFileId = await _service.saveDriveBackup(
           initialPayload,
           promptIfNecessary: promptIfNecessary,
         );
+        uploadedToDrive = true;
 
         if (legacy != null) {
           await _service.deleteLegacyFirebaseBackup();
@@ -254,11 +332,37 @@ class CloudSyncProvider extends ChangeNotifier {
       }
 
       await _storage.saveGoogleProfile(_profile);
+      if (loadedFromDrive && uploadedToDrive) {
+        _emitBanner(
+          SyncBannerKind.synced,
+          'Google Drive synced (loaded & saved)',
+        );
+      } else if (loadedFromDrive) {
+        _emitBanner(
+          SyncBannerKind.loaded,
+          'Loaded backup from Google Drive',
+        );
+      } else if (uploadedToDrive) {
+        _emitBanner(
+          SyncBannerKind.saved,
+          'Saved backup to Google Drive',
+        );
+      } else {
+        _emitBanner(
+          SyncBannerKind.synced,
+          'Google Drive backup up to date',
+        );
+      }
     } catch (e) {
       _errorMessage = 'Google Drive sync failed: $e';
+      _emitBanner(
+        SyncBannerKind.error,
+        _friendlySyncError(e),
+        canRetry: true,
+      );
     } finally {
       _isSyncing = false;
-      notifyListeners();
+      if (!_disposed) notifyListeners();
     }
   }
 
@@ -349,6 +453,7 @@ class CloudSyncProvider extends ChangeNotifier {
     notifyListeners();
 
     var succeeded = true;
+    var uploadedAny = false;
     try {
       _deletedTaskIds = await _storage.loadDeletedTaskIds();
       do {
@@ -375,6 +480,7 @@ class CloudSyncProvider extends ChangeNotifier {
           knownFileId: _profile?.driveFileId,
           promptIfNecessary: promptIfNecessary,
         );
+        uploadedAny = true;
         _lastSyncedFingerprint = fingerprint;
         _profile = _profile!.copyWith(
           driveFileId: nextId,
@@ -382,16 +488,24 @@ class CloudSyncProvider extends ChangeNotifier {
         );
         await _storage.saveGoogleProfile(_profile);
       } while (_queuedUpload);
+      if (uploadedAny) {
+        _emitBanner(SyncBannerKind.saved, 'Saved to Google Drive');
+      }
     } catch (e) {
       succeeded = false;
       _errorMessage = 'Drive backup failed: $e';
+      _emitBanner(
+        SyncBannerKind.error,
+        _friendlySyncError(e),
+        canRetry: true,
+      );
     } finally {
       _uploadInFlight = false;
       if (!silent) {
         _isBusy = false;
       }
       _isSyncing = false;
-      notifyListeners();
+      if (!_disposed) notifyListeners();
     }
     return succeeded;
   }
@@ -431,14 +545,20 @@ class CloudSyncProvider extends ChangeNotifier {
         lastSyncedAt: DateTime.now(),
       );
       await _storage.saveGoogleProfile(_profile);
+      _emitBanner(SyncBannerKind.loaded, 'Loaded backup from Google Drive');
       return true;
     } catch (e) {
       _errorMessage = 'Restore failed: $e';
+      _emitBanner(
+        SyncBannerKind.error,
+        _friendlySyncError(e),
+        canRetry: true,
+      );
       return false;
     } finally {
       _isBusy = false;
       _isSyncing = false;
-      notifyListeners();
+      if (!_disposed) notifyListeners();
     }
   }
 
@@ -503,6 +623,7 @@ class CloudSyncProvider extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _debounceTimer?.cancel();
     _aiSettings.setOnDataChanged(null);
     _tasks.setOnDataChanged(null);

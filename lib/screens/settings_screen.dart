@@ -7,6 +7,7 @@ import '../providers/ai_settings_provider.dart';
 import '../providers/cloud_sync_provider.dart';
 import '../providers/security_provider.dart';
 import '../providers/task_provider.dart';
+import '../providers/update_provider.dart';
 import '../services/notification_service.dart';
 import '../services/update_service.dart';
 import '../theme/app_tokens.dart';
@@ -17,22 +18,89 @@ import 'api_keys_screen.dart';
 
 /// "Profile" screen matching the right glassmorphism reference layout with drop-down controls.
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key, required this.notifications});
+  const SettingsScreen({
+    super.key,
+    required this.notifications,
+    this.openUpdateSignal = 0,
+    this.openCloudSignal = 0,
+  });
 
   final NotificationService notifications;
+  final int openUpdateSignal;
+  final int openCloudSignal;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  final ScrollController _scrollController = ScrollController();
+  final GlobalKey _checkUpdatesKey = GlobalKey();
+  final GlobalKey _cloudSectionKey = GlobalKey();
+
   String? _expandedSection;
   String _appVersion = '1.0.0';
+  int _handledUpdateSignal = 0;
+  int _handledCloudSignal = 0;
 
   @override
   void initState() {
     super.initState();
     _loadAppVersion();
+    _checkNavigationSignals();
+  }
+
+  @override
+  void didUpdateWidget(covariant SettingsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _checkNavigationSignals();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _checkNavigationSignals() {
+    if (widget.openUpdateSignal > _handledUpdateSignal) {
+      _handledUpdateSignal = widget.openUpdateSignal;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _scrollToKey(_checkUpdatesKey);
+        _handleCheckForUpdates();
+      });
+    }
+    if (widget.openCloudSignal > _handledCloudSignal) {
+      _handledCloudSignal = widget.openCloudSignal;
+      setState(() => _expandedSection = 'cloud');
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _scrollToKey(_cloudSectionKey);
+      });
+    }
+  }
+
+  void _scrollToKey(GlobalKey key) {
+    final targetContext = key.currentContext;
+    if (targetContext != null) {
+      Scrollable.ensureVisible(
+        targetContext,
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOutCubic,
+        alignment: 0.35,
+      );
+    }
+  }
+
+  Future<void> _handleCheckForUpdates() async {
+    final updateProvider = context.read<UpdateProvider>();
+    final available = updateProvider.availableUpdate;
+    if (available != null) {
+      await UpdateService.showUpdateAvailableDialog(context, available);
+      return;
+    }
+    await UpdateService.checkForUpdate(context);
   }
 
   Future<void> _loadAppVersion() async {
@@ -76,6 +144,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final taskProvider = context.read<TaskProvider>();
     final cloud = context.watch<CloudSyncProvider>();
     final security = context.watch<SecurityProvider>();
+    final updateProvider = context.watch<UpdateProvider>();
     final colors = context.appColors;
     final textTheme = Theme.of(context).textTheme;
     final reminder = aiSettings.reminderSettings;
@@ -87,6 +156,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: AppLayout.maxContentWidth),
           child: SingleChildScrollView(
+            controller: _scrollController,
             padding: EdgeInsets.fromLTRB(
               AppSpacing.lg,
               AppSpacing.sm,
@@ -366,6 +436,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     const Divider(height: 1),
                     _ProfileAccordionSection(
+                      key: _cloudSectionKey,
                       icon: Icons.cloud_outlined,
                       title: 'Google Drive & Data Backup',
                       subtitle: cloud.isSignedIn
@@ -410,10 +481,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     const Divider(height: 1),
                     _ProfileNavRow(
+                      key: _checkUpdatesKey,
                       icon: Icons.system_update_rounded,
                       title: 'Check for Updates',
-                      subtitle: 'Verify latest release on GitHub',
-                      onTap: () => UpdateService.checkForUpdate(context),
+                      subtitle: updateProvider.hasUpdate
+                          ? 'New version v${updateProvider.availableUpdate!.latestVersion} available'
+                          : 'Verify latest release on GitHub',
+                      trailing: updateProvider.hasUpdate
+                          ? Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 3,
+                              ),
+                              margin: const EdgeInsets.only(right: 6),
+                              decoration: BoxDecoration(
+                                color: colors.primarySoft,
+                                borderRadius: BorderRadius.circular(
+                                  AppRadius.pill,
+                                ),
+                              ),
+                              child: Text(
+                                'New',
+                                style: textTheme.labelSmall?.copyWith(
+                                  color: colors.primary,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            )
+                          : null,
+                      onTap: _handleCheckForUpdates,
                     ),
                     const Divider(height: 1),
                     const _AboutInfoRow(
@@ -569,10 +665,12 @@ class _ProfileAvatar extends StatelessWidget {
 
 class _ProfileNavRow extends StatelessWidget {
   const _ProfileNavRow({
+    super.key,
     required this.icon,
     required this.title,
     required this.subtitle,
     required this.onTap,
+    this.trailing,
     this.quarterTurns = 0,
   });
 
@@ -580,6 +678,7 @@ class _ProfileNavRow extends StatelessWidget {
   final String title;
   final String subtitle;
   final VoidCallback onTap;
+  final Widget? trailing;
   final double quarterTurns;
 
   @override
@@ -626,6 +725,7 @@ class _ProfileNavRow extends StatelessWidget {
                 ],
               ),
             ),
+            ?trailing,
             AnimatedRotation(
               turns: quarterTurns,
               duration: const Duration(milliseconds: 180),
@@ -643,6 +743,7 @@ class _ProfileNavRow extends StatelessWidget {
 
 class _ProfileAccordionSection extends StatelessWidget {
   const _ProfileAccordionSection({
+    super.key,
     required this.icon,
     required this.title,
     required this.subtitle,

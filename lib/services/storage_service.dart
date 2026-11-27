@@ -22,6 +22,7 @@ class StorageService {
   static const _googleProfileKey = 'htodo_google_profile_v1';
   static const _lastUpdatedAtKey = 'htodo_last_updated_at_v1';
   static const _deletedTaskIdsKey = 'htodo_deleted_task_ids_v1';
+  static const _lastNotifiedUpdateKey = 'htodo_last_notified_update_v1';
   static const int _maxDeletedTombstones = 1000;
 
   SharedPreferences? _prefs;
@@ -227,6 +228,22 @@ class StorageService {
       await prefs.remove(_googleProfileKey);
     } else {
       await prefs.setString(_googleProfileKey, jsonEncode(profile.toJson()));
+    }
+  }
+
+  Future<String?> loadLastNotifiedUpdateVersion() async {
+    final prefs = await _instance();
+    final raw = prefs.getString(_lastNotifiedUpdateKey);
+    if (raw == null || raw.trim().isEmpty) return null;
+    return raw.trim();
+  }
+
+  Future<void> saveLastNotifiedUpdateVersion(String? version) async {
+    final prefs = await _instance();
+    if (version == null || version.trim().isEmpty) {
+      await prefs.remove(_lastNotifiedUpdateKey);
+    } else {
+      await prefs.setString(_lastNotifiedUpdateKey, version.trim());
     }
   }
 }

@@ -386,7 +386,7 @@ class _TopUndoPopup extends StatelessWidget {
 
     return GlassContainer(
       borderRadius: AppRadius.lg,
-      blur: 14,
+      blur: 10,
       elevated: true,
       borderColor: colors.glassBorder,
       padding: const EdgeInsets.symmetric(

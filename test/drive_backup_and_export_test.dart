@@ -20,6 +20,56 @@ import 'package:h_todo_ai/services/google_drive_backup_client.dart';
 import 'package:h_todo_ai/services/notification_service.dart';
 import 'package:h_todo_ai/services/storage_service.dart';
 
+class _FakeSyncBackupService extends CloudBackupService {
+  _FakeSyncBackupService({
+    this.silentAccount,
+    this.remotePayload,
+    this.failFetchWith,
+    this.failSaveWith,
+  });
+
+  final GoogleAccountProfile? silentAccount;
+  final CloudBackupPayload? remotePayload;
+  final Object? failFetchWith;
+  final Object? failSaveWith;
+
+  int silentRestoreCalls = 0;
+  int fetchCalls = 0;
+  int saveCalls = 0;
+
+  @override
+  bool get isAvailable => true;
+
+  @override
+  bool get isSignedInSessionActive => silentAccount != null && silentRestoreCalls > 0;
+
+  @override
+  Future<GoogleAccountProfile?> restoreSilentSession() async {
+    silentRestoreCalls++;
+    return silentAccount;
+  }
+
+  @override
+  Future<({CloudBackupPayload? payload, String? fileId})> fetchDriveBackup({
+    bool promptIfNecessary = false,
+  }) async {
+    fetchCalls++;
+    if (failFetchWith != null) throw failFetchWith!;
+    return (payload: remotePayload, fileId: remotePayload == null ? null : 'drv-fake-1');
+  }
+
+  @override
+  Future<String> saveDriveBackup(
+    CloudBackupPayload payload, {
+    String? knownFileId,
+    bool promptIfNecessary = false,
+  }) async {
+    saveCalls++;
+    if (failSaveWith != null) throw failSaveWith!;
+    return knownFileId ?? 'drv-fake-1';
+  }
+}
+
 void main() {
   CloudBackupPayload buildSamplePayload({
     String geminiKey = 'AIza-test-key-123',
@@ -500,6 +550,160 @@ void main() {
       final merged = olderCloud.mergeWithLocal(localWithTombstone);
       expect(merged.tasks.map((t) => t.id), ['t-keep']);
       expect(merged.deletedTaskIds, ['t-del-offline']);
+    });
+
+    test(
+        'new users stay opt-in (no auto silent sign-in) while returning users sync quietly with loaded/saved/error banners',
+        () async {
+      // 1. Brand-new user with no cached profile -> zero silent sign-in attempts.
+      SharedPreferences.setMockInitialValues({});
+      final storageNew = StorageService();
+      final aiNew = AiSettingsProvider(storage: storageNew);
+      final tasksNew = TaskProvider(
+        storage: storageNew,
+        notifications: NotificationService(),
+      );
+      final chatNew = ChatProvider(storage: storageNew);
+      await Future.wait([aiNew.load(), tasksNew.load(), chatNew.load()]);
+
+      final fakeNew = _FakeSyncBackupService(
+        silentAccount: const GoogleAccountProfile(
+          id: 'g-1',
+          email: 'new.user@gmail.com',
+        ),
+      );
+      final syncNew = CloudSyncProvider(
+        service: fakeNew,
+        storage: storageNew,
+        aiSettings: aiNew,
+        tasks: tasksNew,
+        chat: chatNew,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      expect(syncNew.isSignedIn, isFalse);
+      expect(fakeNew.silentRestoreCalls, 0);
+      expect(syncNew.statusBanner, isNull);
+      syncNew.dispose();
+
+      // 2. Returning user -> silently loads remote Drive tasks and emits loaded banner.
+      const savedProfile = GoogleAccountProfile(
+        id: 'g-1',
+        email: 'returning@gmail.com',
+        displayName: 'Returning Student',
+      );
+      SharedPreferences.setMockInitialValues({
+        'htodo_google_profile_v1': jsonEncode(savedProfile.toJson()),
+      });
+      final storageRet = StorageService();
+      final aiRet = AiSettingsProvider(storage: storageRet);
+      final tasksRet = TaskProvider(
+        storage: storageRet,
+        notifications: NotificationService(),
+      );
+      final chatRet = ChatProvider(storage: storageRet);
+      await Future.wait([aiRet.load(), tasksRet.load(), chatRet.load()]);
+
+      final fakeRet = _FakeSyncBackupService(
+        silentAccount: savedProfile,
+        remotePayload: buildSamplePayload(),
+      );
+      final syncRet = CloudSyncProvider(
+        service: fakeRet,
+        storage: storageRet,
+        aiSettings: aiRet,
+        tasks: tasksRet,
+        chat: chatRet,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      expect(syncRet.isSignedIn, isTrue);
+      expect(fakeRet.silentRestoreCalls, 1);
+      expect(tasksRet.tasks.map((t) => t.title), ['Assignment 01']);
+      expect(syncRet.statusBanner?.kind, SyncBannerKind.loaded);
+
+      syncRet.dismissStatusBanner();
+      expect(syncRet.statusBanner, isNull);
+
+      // Explicit save emits saved banner.
+      final savedOk = await syncRet.backupNow(silent: true);
+      expect(savedOk, isTrue);
+      // Since local matches lastSyncedFingerprint, force upload by adding a task.
+      await tasksRet.addTask(
+        TaskItem(
+          id: 't-local-new',
+          notificationBaseId: 401,
+          title: 'Evening Review',
+          dueDate: DateTime(2026, 11, 28),
+          createdAt: DateTime(2026, 11, 27),
+        ),
+      );
+      await syncRet.backupNow(silent: true);
+      expect(syncRet.statusBanner?.kind, SyncBannerKind.saved);
+      syncRet.dispose();
+
+      // 3. Returning user with expired silent session -> emits error banner with retry.
+      SharedPreferences.setMockInitialValues({
+        'htodo_google_profile_v1': jsonEncode(savedProfile.toJson()),
+      });
+      final storageErr = StorageService();
+      final aiErr = AiSettingsProvider(storage: storageErr);
+      final tasksErr = TaskProvider(
+        storage: storageErr,
+        notifications: NotificationService(),
+      );
+      final chatErr = ChatProvider(storage: storageErr);
+      await Future.wait([aiErr.load(), tasksErr.load(), chatErr.load()]);
+
+      final fakeErr = _FakeSyncBackupService(
+        silentAccount: savedProfile,
+        failFetchWith: Exception('Network timeout'),
+        failSaveWith: Exception('Upload timeout'),
+      );
+      final syncErr = CloudSyncProvider(
+        service: fakeErr,
+        storage: storageErr,
+        aiSettings: aiErr,
+        tasks: tasksErr,
+        chat: chatErr,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(fakeErr.silentRestoreCalls, 1);
+      expect(syncErr.statusBanner?.kind, SyncBannerKind.error);
+      expect(syncErr.statusBanner?.canRetry, isTrue);
+
+      syncErr.dismissStatusBanner();
+      await syncErr.backupNow(silent: true);
+      expect(syncErr.statusBanner?.kind, SyncBannerKind.error);
+      syncErr.dispose();
+
+      // 4. Returning user with missing silent session -> paused reconnect banner.
+      SharedPreferences.setMockInitialValues({
+        'htodo_google_profile_v1': jsonEncode(savedProfile.toJson()),
+      });
+      final storagePaused = StorageService();
+      final aiPaused = AiSettingsProvider(storage: storagePaused);
+      final tasksPaused = TaskProvider(
+        storage: storagePaused,
+        notifications: NotificationService(),
+      );
+      final chatPaused = ChatProvider(storage: storagePaused);
+      await Future.wait([
+        aiPaused.load(),
+        tasksPaused.load(),
+        chatPaused.load(),
+      ]);
+
+      final fakePaused = _FakeSyncBackupService(silentAccount: null);
+      final syncPaused = CloudSyncProvider(
+        service: fakePaused,
+        storage: storagePaused,
+        aiSettings: aiPaused,
+        tasks: tasksPaused,
+        chat: chatPaused,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      expect(syncPaused.statusBanner?.kind, SyncBannerKind.error);
+      expect(syncPaused.statusBanner?.canRetry, isTrue);
+      syncPaused.dispose();
     });
   });
 }

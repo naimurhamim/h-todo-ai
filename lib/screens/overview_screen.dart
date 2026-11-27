@@ -6,6 +6,7 @@ import '../models/task_item.dart';
 import '../providers/ai_settings_provider.dart';
 import '../providers/cloud_sync_provider.dart';
 import '../providers/task_provider.dart';
+import '../providers/update_provider.dart';
 import '../theme/app_tokens.dart';
 import '../widgets/circular_progress_ring.dart';
 import '../widgets/glass_surface.dart';
@@ -23,11 +24,13 @@ class OverviewScreen extends StatefulWidget {
     required this.onGoToPlan,
     required this.onGoToAiChat,
     required this.onGoToProfile,
+    required this.onGoToUpdate,
   });
 
   final VoidCallback onGoToPlan;
   final VoidCallback onGoToAiChat;
   final VoidCallback onGoToProfile;
+  final VoidCallback onGoToUpdate;
 
   @override
   State<OverviewScreen> createState() => _OverviewScreenState();
@@ -57,6 +60,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
     final taskProvider = context.watch<TaskProvider>();
     final aiSettings = context.watch<AiSettingsProvider>();
     final cloud = context.watch<CloudSyncProvider>();
+    final updateProvider = context.watch<UpdateProvider>();
     final colors = context.appColors;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textTheme = Theme.of(context).textTheme;
@@ -64,6 +68,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
 
     final now = DateTime.now();
     final today = _normalize(now);
+    final tomorrow = today.add(const Duration(days: 1));
     final weekDays = _weekDaysFor(_selectedDay);
 
     final dayTasks = taskProvider.tasks
@@ -97,15 +102,50 @@ class _OverviewScreenState extends State<OverviewScreen> {
             : taskProvider.completedCount / taskProvider.tasks.length)
         : dayCompleted / dayTotal;
 
+    int sortByDueAndPriority(TaskItem a, TaskItem b) {
+      final d = _normalize(a.dueDate).compareTo(_normalize(b.dueDate));
+      if (d != 0) return d;
+      final h = (a.dueHour ?? 23).compareTo(b.dueHour ?? 23);
+      if (h != 0) return h;
+      final m = (a.dueMinute ?? 59).compareTo(b.dueMinute ?? 59);
+      if (m != 0) return m;
+      return a.priority.index.compareTo(b.priority.index);
+    }
+
     final pendingSorted = taskProvider.tasks
         .where((t) => !t.isCompleted)
         .toList()
-      ..sort((a, b) {
-        final d = a.dueDate.compareTo(b.dueDate);
-        if (d != 0) return d;
-        return (a.dueHour ?? 23).compareTo(b.dueHour ?? 23);
-      });
+      ..sort(sortByDueAndPriority);
     final nextTask = pendingSorted.isNotEmpty ? pendingSorted.first : null;
+
+    final todayRemaining = pendingSorted
+        .where((t) => _normalize(t.dueDate) == today)
+        .toList();
+    final tomorrowRemaining = pendingSorted
+        .where((t) => _normalize(t.dueDate) == tomorrow)
+        .toList();
+    final laterRemaining = pendingSorted
+        .where((t) => _normalize(t.dueDate).isAfter(tomorrow))
+        .toList();
+
+    final String upcomingScopeLabel;
+    final List<TaskItem> upcomingPreviewTasks;
+    if (todayRemaining.isNotEmpty) {
+      upcomingScopeLabel = 'Today';
+      upcomingPreviewTasks = todayRemaining;
+    } else if (tomorrowRemaining.isNotEmpty) {
+      upcomingScopeLabel = 'Tomorrow';
+      upcomingPreviewTasks = tomorrowRemaining;
+    } else if (laterRemaining.isNotEmpty) {
+      upcomingScopeLabel = 'Soon';
+      upcomingPreviewTasks = laterRemaining;
+    } else if (pendingSorted.isNotEmpty) {
+      upcomingScopeLabel = 'Pending';
+      upcomingPreviewTasks = pendingSorted;
+    } else {
+      upcomingScopeLabel = '';
+      upcomingPreviewTasks = const [];
+    }
 
     return SafeArea(
       bottom: false,
@@ -113,6 +153,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: AppLayout.maxContentWidth),
           child: ListView(
+            cacheExtent: 500,
             padding: EdgeInsets.fromLTRB(
               AppSpacing.lg,
               AppSpacing.sm,
@@ -154,9 +195,14 @@ class _OverviewScreenState extends State<OverviewScreen> {
                   GlassCircleButton(
                     icon: Icons.notifications_none_rounded,
                     tooltip: 'Notifications',
-                    badgeCount: taskProvider.dueTodayCount,
+                    badgeCount:
+                        taskProvider.dueTodayCount +
+                        (updateProvider.hasUpdate ? 1 : 0),
                     size: 42,
-                    onTap: () => NotificationsSheet.show(context),
+                    onTap: () => NotificationsSheet.show(
+                      context,
+                      onOpenUpdate: widget.onGoToUpdate,
+                    ),
                   ),
                 ],
               ),
@@ -388,10 +434,12 @@ class _OverviewScreenState extends State<OverviewScreen> {
                   ),
                   const SizedBox(width: AppSpacing.md),
                   Expanded(
-                    child: _NextTaskPreviewWidget(
-                      nextTask: nextTask,
-                      onTap: nextTask != null
-                          ? () => TaskDetailSheet.show(context, nextTask.id)
+                    child: _UpcomingTasksPreviewWidget(
+                      tasks: upcomingPreviewTasks,
+                      scopeLabel: upcomingScopeLabel,
+                      onOpenTask: (id) => TaskDetailSheet.show(context, id),
+                      onOpenCard: upcomingPreviewTasks.isNotEmpty
+                          ? widget.onGoToPlan
                           : widget.onGoToAiChat,
                     ),
                   ),
@@ -739,36 +787,88 @@ class _NextCountdownWidget extends StatelessWidget {
   }
 }
 
-class _NextTaskPreviewWidget extends StatelessWidget {
-  const _NextTaskPreviewWidget({
-    required this.nextTask,
-    required this.onTap,
+class _UpcomingTasksPreviewWidget extends StatelessWidget {
+  const _UpcomingTasksPreviewWidget({
+    required this.tasks,
+    required this.scopeLabel,
+    required this.onOpenTask,
+    required this.onOpenCard,
   });
 
-  final TaskItem? nextTask;
-  final VoidCallback onTap;
+  final List<TaskItem> tasks;
+  final String scopeLabel;
+  final ValueChanged<String> onOpenTask;
+  final VoidCallback onOpenCard;
+
+  String _formatTrailingTime(TaskItem task, String scope) {
+    if (task.formattedDueTime != null) return task.formattedDueTime!;
+    if (scope == 'Soon' || scope == 'Pending') {
+      return DateFormat('d MMM').format(task.dueDate);
+    }
+    return task.type.label;
+  }
 
   @override
   Widget build(BuildContext context) {
     final colors = context.appColors;
     final textTheme = Theme.of(context).textTheme;
+    final visibleCount = tasks.length > 3 ? 2 : tasks.length;
+    final extraCount = tasks.length - visibleCount;
 
     return GlassContainer(
       borderRadius: AppRadius.lg,
       blur: 0,
       elevated: true,
-      onTap: onTap,
+      onTap: onOpenCard,
       padding: const EdgeInsets.all(AppSpacing.md),
       child: SizedBox(
         height: 168,
-        child: nextTask == null
-            ? Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Upcoming Tasks',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                if (scopeLabel.isNotEmpty) ...[
+                  const SizedBox(width: 4),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: colors.primarySoft,
+                      borderRadius: BorderRadius.circular(AppRadius.pill),
+                    ),
+                    child: Text(
+                      scopeLabel,
+                      style: textTheme.labelSmall?.copyWith(
+                        color: colors.primary,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 10.5,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            if (tasks.isEmpty) ...[
+              const Spacer(),
+              Row(
                 children: [
                   Container(
-                    width: 40,
-                    height: 40,
+                    width: 32,
+                    height: 32,
                     decoration: BoxDecoration(
                       color: colors.primarySoft,
                       borderRadius: BorderRadius.circular(AppRadius.sm),
@@ -776,96 +876,134 @@ class _NextTaskPreviewWidget extends StatelessWidget {
                     child: Icon(
                       Icons.auto_awesome_rounded,
                       color: colors.primary,
-                      size: 20,
+                      size: 17,
                     ),
                   ),
-                  const SizedBox(height: AppSpacing.md),
-                  Text(
-                    'AI Auto-Plan',
-                    style: textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Paste any schedule notice to generate tasks & reminders.',
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                    style: textTheme.bodySmall,
-                  ),
-                ],
-              )
-            : Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: colors.surfaceSubtle,
-                          borderRadius: BorderRadius.circular(AppRadius.pill),
-                        ),
-                        child: Text(
-                          nextTask!.type.label,
-                          style: textTheme.labelSmall?.copyWith(
-                            color: colors.textPrimary,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      const Spacer(),
-                      Icon(
-                        Icons.arrow_forward_rounded,
-                        size: 16,
-                        color: colors.textSecondary,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                  Text(
-                    nextTask!.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  if (nextTask!.courseOrCategory.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      nextTask!.courseOrCategory,
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: Text(
+                      'All clear today',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: textTheme.bodySmall,
+                      style: textTheme.labelLarge?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  ],
-                  const Spacer(),
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.event_outlined,
-                        size: 14,
-                        color: colors.textSecondary,
-                      ),
-                      const SizedBox(width: 4),
-                      Expanded(
-                        child: Text(
-                          nextTask!.formattedDueTime != null
-                              ? '${DateFormat('d MMM').format(nextTask!.dueDate)} • ${nextTask!.formattedDueTime}'
-                              : DateFormat('EEE, d MMM').format(nextTask!.dueDate),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: textTheme.labelSmall,
-                        ),
-                      ),
-                    ],
                   ),
                 ],
               ),
+              const SizedBox(height: 6),
+              Text(
+                'Paste any schedule in AI chat to generate tasks & reminders.',
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: textTheme.bodySmall,
+              ),
+              const Spacer(),
+            ] else ...[
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisAlignment: MainAxisAlignment.start,
+                  children: [
+                    for (var i = 0; i < visibleCount; i++) ...[
+                      if (i > 0) const SizedBox(height: 6),
+                      _UpcomingShortRow(
+                        title: tasks[i].title,
+                        meta: _formatTrailingTime(tasks[i], scopeLabel),
+                        onTap: () => onOpenTask(tasks[i].id),
+                      ),
+                    ],
+                    if (extraCount > 0) ...[
+                      const Spacer(),
+                      Row(
+                        children: [
+                          Text(
+                            '+ $extraCount more upcoming',
+                            style: textTheme.labelSmall?.copyWith(
+                              color: colors.primary,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const Spacer(),
+                          Icon(
+                            Icons.arrow_forward_rounded,
+                            size: 14,
+                            color: colors.primary,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _UpcomingShortRow extends StatelessWidget {
+  const _UpcomingShortRow({
+    required this.title,
+    required this.meta,
+    required this.onTap,
+  });
+
+  final String title;
+  final String meta;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.appColors;
+    final textTheme = Theme.of(context).textTheme;
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppRadius.sm),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          color: colors.surfaceSubtle,
+          borderRadius: BorderRadius.circular(AppRadius.sm),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 6,
+              height: 6,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: colors.primary,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: textTheme.labelMedium?.copyWith(
+                  color: colors.textPrimary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            const SizedBox(width: 4),
+            Text(
+              meta,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: textTheme.labelSmall?.copyWith(
+                color: colors.textSecondary,
+                fontSize: 10,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

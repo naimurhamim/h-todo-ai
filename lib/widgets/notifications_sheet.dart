@@ -5,21 +5,27 @@ import 'package:provider/provider.dart';
 import '../models/task_item.dart';
 import '../providers/ai_settings_provider.dart';
 import '../providers/task_provider.dart';
+import '../providers/update_provider.dart';
 import '../services/notification_service.dart';
 import '../theme/app_tokens.dart';
 import 'glass_surface.dart';
 import 'task_card.dart';
 
-/// Frosted read-only notifications modal with separate Today and Tomorrow panels.
+/// Frosted read-only notifications modal with app-update banner and Today/Tomorrow panels.
 class NotificationsSheet extends StatefulWidget {
-  const NotificationsSheet({super.key});
+  const NotificationsSheet({super.key, this.onOpenUpdate});
 
-  static Future<void> show(BuildContext context) {
+  final VoidCallback? onOpenUpdate;
+
+  static Future<void> show(
+    BuildContext context, {
+    VoidCallback? onOpenUpdate,
+  }) {
     return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (_) => const NotificationsSheet(),
+      builder: (_) => NotificationsSheet(onOpenUpdate: onOpenUpdate),
     );
   }
 
@@ -77,6 +83,7 @@ class _NotificationsSheetState extends State<NotificationsSheet> {
   Widget build(BuildContext context) {
     final taskProvider = context.watch<TaskProvider>();
     final reminder = context.watch<AiSettingsProvider>().reminderSettings;
+    final updateInfo = context.watch<UpdateProvider>().availableUpdate;
     final colors = context.appColors;
     final textTheme = Theme.of(context).textTheme;
     final now = DateTime.now();
@@ -115,7 +122,7 @@ class _NotificationsSheetState extends State<NotificationsSheet> {
       ),
       child: GlassContainer(
         borderRadius: AppRadius.xl,
-        blur: 18,
+        blur: 10,
         elevated: true,
         padding: const EdgeInsets.fromLTRB(
           AppSpacing.lg,
@@ -171,6 +178,65 @@ class _NotificationsSheetState extends State<NotificationsSheet> {
               ],
             ),
             const SizedBox(height: AppSpacing.md),
+            if (updateInfo != null) ...[
+              GlassContainer(
+                borderRadius: AppRadius.lg,
+                blur: 0,
+                borderColor: colors.primary,
+                fillColor: colors.primarySoft,
+                onTap: () {
+                  Navigator.of(context).pop();
+                  widget.onOpenUpdate?.call();
+                },
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.md,
+                  vertical: AppSpacing.sm,
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: colors.primary,
+                      ),
+                      child: Icon(
+                        Icons.system_update_rounded,
+                        size: 18,
+                        color: colors.onPrimary,
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.md),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Update Available • v${updateInfo.latestVersion}',
+                            style: textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              color: colors.textPrimary,
+                            ),
+                          ),
+                          Text(
+                            'Tap to view in Profile -> Check for Updates',
+                            style: textTheme.bodySmall?.copyWith(
+                              color: colors.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      color: colors.primary,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+            ],
             GlassContainer(
               borderRadius: AppRadius.pill,
               blur: 0,

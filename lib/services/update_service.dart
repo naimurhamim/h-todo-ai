@@ -8,6 +8,24 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../theme/app_tokens.dart';
 
+/// Metadata describing a newer GitHub release available for installation.
+@immutable
+class AppUpdateInfo {
+  const AppUpdateInfo({
+    required this.currentVersion,
+    required this.latestVersion,
+    required this.notes,
+    required this.downloadUrl,
+    required this.releasePageUrl,
+  });
+
+  final String currentVersion;
+  final String latestVersion;
+  final String notes;
+  final String downloadUrl;
+  final String releasePageUrl;
+}
+
 /// Checks GitHub Releases for newer builds of H-TODO AI and opens downloads.
 class UpdateService {
   static const String repoOwner = 'naimurhamim';
@@ -16,6 +34,89 @@ class UpdateService {
       'https://github.com/$repoOwner/$repoName/releases';
   static const String latestApiUrl =
       'https://api.github.com/repos/$repoOwner/$repoName/releases/latest';
+
+  static AppUpdateInfo? _parseReleasePayload(
+    String body, {
+    required String currentVersion,
+  }) {
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final rawTag = (data['tag_name'] ?? '0.0.0').toString();
+    final latestVersion = rawTag.replaceFirst(RegExp(r'^[vV]'), '');
+    if (!isNewerVersion(latestVersion, currentVersion)) {
+      return null;
+    }
+
+    final releaseNotes =
+        (data['body'] ?? 'New improvements and fixes included.').toString();
+    final releasePageUrl = (data['html_url'] ?? releasesUrl).toString();
+
+    var downloadUrl = releasePageUrl;
+    final assets = data['assets'];
+    if (assets is List) {
+      for (final asset in assets) {
+        if (asset is Map<String, dynamic>) {
+          final url = asset['browser_download_url']?.toString() ?? '';
+          if (url.toLowerCase().endsWith('.apk')) {
+            downloadUrl = url;
+            break;
+          }
+        }
+      }
+    }
+
+    return AppUpdateInfo(
+      currentVersion: currentVersion,
+      latestVersion: latestVersion,
+      notes: releaseNotes,
+      downloadUrl: downloadUrl,
+      releasePageUrl: releasePageUrl,
+    );
+  }
+
+  /// Silently checks GitHub Releases on launch and returns info only if a newer version exists.
+  static Future<AppUpdateInfo?> fetchLatestUpdate({
+    http.Client? client,
+    String? currentVersionOverride,
+  }) async {
+    final ownedClient = client == null;
+    final httpClient = client ?? http.Client();
+    final currentVersion =
+        currentVersionOverride ?? await getCurrentVersion();
+
+    try {
+      final response = await httpClient
+          .get(
+            Uri.parse(latestApiUrl),
+            headers: const {'Accept': 'application/vnd.github.v3+json'},
+          )
+          .timeout(const Duration(seconds: 12));
+
+      if (response.statusCode != 200) return null;
+      return _parseReleasePayload(
+        response.body,
+        currentVersion: currentVersion,
+      );
+    } catch (_) {
+      return null;
+    } finally {
+      if (ownedClient) {
+        httpClient.close();
+      }
+    }
+  }
+
+  static Future<void> showUpdateAvailableDialog(
+    BuildContext context,
+    AppUpdateInfo info,
+  ) {
+    return _showUpdateAvailableDialog(
+      context,
+      currentVersion: info.currentVersion,
+      latestVersion: info.latestVersion,
+      notes: info.notes,
+      downloadUrl: info.downloadUrl,
+    );
+  }
 
   /// Compares two semantic version strings (e.g. "v1.2.0" vs "1.0.1+2").
   static bool isNewerVersion(String latestRaw, String currentRaw) {
@@ -103,36 +204,13 @@ class UpdateService {
       Navigator.of(context, rootNavigator: true).pop();
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final rawTag = (data['tag_name'] ?? '0.0.0').toString();
-        final latestVersion = rawTag.replaceFirst(RegExp(r'^[vV]'), '');
-        final releaseNotes =
-            (data['body'] ?? 'New improvements and fixes included.').toString();
-        final releasePageUrl =
-            (data['html_url'] ?? releasesUrl).toString();
+        final info = _parseReleasePayload(
+          response.body,
+          currentVersion: currentVersion,
+        );
 
-        var downloadUrl = releasePageUrl;
-        final assets = data['assets'];
-        if (assets is List) {
-          for (final asset in assets) {
-            if (asset is Map<String, dynamic>) {
-              final url = asset['browser_download_url']?.toString() ?? '';
-              if (url.toLowerCase().endsWith('.apk')) {
-                downloadUrl = url;
-                break;
-              }
-            }
-          }
-        }
-
-        if (isNewerVersion(latestVersion, currentVersion)) {
-          await _showUpdateAvailableDialog(
-            context,
-            currentVersion: currentVersion,
-            latestVersion: latestVersion,
-            notes: releaseNotes,
-            downloadUrl: downloadUrl,
-          );
+        if (info != null) {
+          await showUpdateAvailableDialog(context, info);
         } else {
           await _showInfoDialog(
             context,

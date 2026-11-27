@@ -106,6 +106,9 @@ class CloudBackupService {
   /// on app startup without displaying interactive UI.
   Future<GoogleAccountProfile?> restoreSilentSession() async {
     if (!isAvailable) return null;
+    if (_currentAccount != null) {
+      return _profileFromAccount(_currentAccount!);
+    }
     try {
       await _ensureGoogleInitialized();
       final attempt = GoogleSignIn.instance.attemptLightweightAuthentication();

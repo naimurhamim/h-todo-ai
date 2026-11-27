@@ -26,7 +26,11 @@ class TasksScreen extends StatefulWidget {
 }
 
 class _TasksScreenState extends State<TasksScreen> {
+  static const int _initialWeekPage = 5000;
+
   late DateTime _selectedDay;
+  late final DateTime _anchorSunday;
+  late PageController _weekPageController;
   bool _timelineMode = false;
   bool _showCompletedOnly = false;
 
@@ -35,14 +39,52 @@ class _TasksScreenState extends State<TasksScreen> {
     super.initState();
     final now = DateTime.now();
     _selectedDay = DateTime(now.year, now.month, now.day);
+    _anchorSunday = _sundayOf(_selectedDay);
+    _weekPageController = PageController(initialPage: _initialWeekPage);
+  }
+
+  @override
+  void dispose() {
+    _weekPageController.dispose();
+    super.dispose();
   }
 
   DateTime _normalize(DateTime d) => DateTime(d.year, d.month, d.day);
 
-  List<DateTime> _weekDaysFor(DateTime anchor) {
-    final startOffset = anchor.weekday % 7;
-    final sunday = anchor.subtract(Duration(days: startOffset));
+  DateTime _sundayOf(DateTime anchor) {
+    final normalized = _normalize(anchor);
+    final startOffset = normalized.weekday % 7;
+    return normalized.subtract(Duration(days: startOffset));
+  }
+
+  int _pageForDate(DateTime date) {
+    final diffDays = _sundayOf(date).difference(_anchorSunday).inDays;
+    return _initialWeekPage + (diffDays ~/ 7);
+  }
+
+  List<DateTime> _weekDaysForPage(int page) {
+    final sunday = _anchorSunday.add(Duration(days: (page - _initialWeekPage) * 7));
     return List.generate(7, (i) => sunday.add(Duration(days: i)));
+  }
+
+  void _stepWeek(int deltaPages) {
+    if (_weekPageController.hasClients) {
+      if (deltaPages < 0) {
+        _weekPageController.previousPage(
+          duration: const Duration(milliseconds: 240),
+          curve: Curves.easeOutCubic,
+        );
+      } else {
+        _weekPageController.nextPage(
+          duration: const Duration(milliseconds: 240),
+          curve: Curves.easeOutCubic,
+        );
+      }
+    } else {
+      setState(() {
+        _selectedDay = _selectedDay.add(Duration(days: deltaPages * 7));
+      });
+    }
   }
 
   @override
@@ -54,7 +96,6 @@ class _TasksScreenState extends State<TasksScreen> {
 
     final now = DateTime.now();
     final today = _normalize(now);
-    final weekDays = _weekDaysFor(_selectedDay);
 
     final statusFiltered = taskProvider.tasks.where((t) {
       return _showCompletedOnly ? t.isCompleted : true;
@@ -94,6 +135,7 @@ class _TasksScreenState extends State<TasksScreen> {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: AppLayout.maxContentWidth),
           child: CustomScrollView(
+            cacheExtent: 500,
             slivers: [
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(
@@ -128,8 +170,15 @@ class _TasksScreenState extends State<TasksScreen> {
                                   icon: Icons.calendar_today_outlined,
                                   tooltip: 'Week Grid View',
                                   selected: !_timelineMode,
-                                  onTap: () =>
-                                      setState(() => _timelineMode = false),
+                                  onTap: () {
+                                    if (!_timelineMode) return;
+                                    final targetPage = _pageForDate(_selectedDay);
+                                    _weekPageController.dispose();
+                                    _weekPageController = PageController(
+                                      initialPage: targetPage,
+                                    );
+                                    setState(() => _timelineMode = false);
+                                  },
                                 ),
                                 _ViewToggleIcon(
                                   icon: Icons.view_agenda_outlined,
@@ -204,105 +253,116 @@ class _TasksScreenState extends State<TasksScreen> {
                               icon: Icons.chevron_left_rounded,
                               tooltip: 'Previous week',
                               size: 38,
-                              onTap: () => setState(() {
-                                _selectedDay = _selectedDay.subtract(
-                                  const Duration(days: 7),
-                                );
-                              }),
+                              onTap: () => _stepWeek(-1),
                             ),
                             const SizedBox(width: AppSpacing.sm),
                             GlassCircleButton(
                               icon: Icons.chevron_right_rounded,
                               tooltip: 'Next week',
                               size: 38,
-                              onTap: () => setState(() {
-                                _selectedDay = _selectedDay.add(
-                                  const Duration(days: 7),
-                                );
-                              }),
+                              onTap: () => _stepWeek(1),
                             ),
                           ],
                         ),
                         const SizedBox(height: AppSpacing.md),
-                        Row(
-                          children: weekDays.map((day) {
-                            final selected = day == _selectedDay;
-                            final isToday = day == today;
-                            final dayItems = statusFiltered
-                                .where((t) => _normalize(t.dueDate) == day)
-                                .toList();
+                        SizedBox(
+                          height: 142,
+                          child: PageView.builder(
+                            controller: _weekPageController,
+                            onPageChanged: (page) {
+                              final days = _weekDaysForPage(page);
+                              final slot = _selectedDay.weekday % 7;
+                              final nextSelected = days[slot];
+                              if (nextSelected != _selectedDay) {
+                                setState(() => _selectedDay = nextSelected);
+                              }
+                            },
+                            itemBuilder: (context, page) {
+                              final pageWeekDays = _weekDaysForPage(page);
+                              return Row(
+                                children: pageWeekDays.map((day) {
+                                  final selected = day == _selectedDay;
+                                  final isToday = day == today;
+                                  final dayItems = statusFiltered
+                                      .where((t) => _normalize(t.dueDate) == day)
+                                      .toList();
 
-                            return Expanded(
-                              child: Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(horizontal: 2),
-                                child: GlassContainer(
-                                  borderRadius: AppRadius.md,
-                                  blur: 0,
-                                  elevated: selected,
-                                  borderColor: selected
-                                      ? colors.primary
-                                      : (isToday
-                                          ? colors.textSecondary
-                                          : colors.glassBorder),
-                                  onTap: () =>
-                                      setState(() => _selectedDay = day),
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 10,
-                                    horizontal: 4,
-                                  ),
-                                  child: SizedBox(
-                                    height: 118,
-                                    child: Column(
-                                      children: [
-                                        Text(
-                                          '${day.day}',
-                                          style:
-                                              textTheme.titleSmall?.copyWith(
-                                            fontWeight: FontWeight.w700,
+                                  return Expanded(
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 2,
+                                      ),
+                                      child: GlassContainer(
+                                        borderRadius: AppRadius.md,
+                                        blur: 0,
+                                        elevated: selected,
+                                        borderColor: selected
+                                            ? colors.primary
+                                            : (isToday
+                                                ? colors.textSecondary
+                                                : colors.glassBorder),
+                                        onTap: () =>
+                                            setState(() => _selectedDay = day),
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 10,
+                                          horizontal: 4,
+                                        ),
+                                        child: SizedBox(
+                                          height: 118,
+                                          child: Column(
+                                            children: [
+                                              Text(
+                                                '${day.day}',
+                                                style: textTheme.titleSmall
+                                                    ?.copyWith(
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                              ),
+                                              Text(
+                                                DateFormat('E')
+                                                    .format(day)
+                                                    .substring(0, 2),
+                                                style: textTheme.labelSmall,
+                                              ),
+                                              const SizedBox(height: 8),
+                                              Expanded(
+                                                child: dayItems.isEmpty
+                                                    ? const SizedBox.shrink()
+                                                    : Wrap(
+                                                        alignment:
+                                                            WrapAlignment
+                                                                .center,
+                                                        spacing: 2,
+                                                        runSpacing: 4,
+                                                        children: dayItems
+                                                            .take(4)
+                                                            .map(
+                                                              (item) => Icon(
+                                                                taskTypeIcon(
+                                                                  item.type,
+                                                                ),
+                                                                size: 13,
+                                                                color: item
+                                                                        .isCompleted
+                                                                    ? colors
+                                                                        .textSecondary
+                                                                    : colors
+                                                                        .textPrimary,
+                                                              ),
+                                                            )
+                                                            .toList(),
+                                                      ),
+                                              ),
+                                            ],
                                           ),
                                         ),
-                                        Text(
-                                          DateFormat('E')
-                                              .format(day)
-                                              .substring(0, 2),
-                                          style: textTheme.labelSmall,
-                                        ),
-                                        const SizedBox(height: 8),
-                                        Expanded(
-                                          child: dayItems.isEmpty
-                                              ? const SizedBox.shrink()
-                                              : Wrap(
-                                                  alignment:
-                                                      WrapAlignment.center,
-                                                  spacing: 2,
-                                                  runSpacing: 4,
-                                                  children: dayItems
-                                                      .take(4)
-                                                      .map(
-                                                        (item) => Icon(
-                                                          taskTypeIcon(
-                                                            item.type,
-                                                          ),
-                                                          size: 13,
-                                                          color: item
-                                                                  .isCompleted
-                                                              ? colors
-                                                                  .textSecondary
-                                                              : colors
-                                                                  .textPrimary,
-                                                        ),
-                                                      )
-                                                      .toList(),
-                                                ),
-                                        ),
-                                      ],
+                                      ),
                                     ),
-                                  ),
-                                ),
-                              ),
-                            );
-                          }).toList(),
+                                  );
+                                }).toList(),
+                              );
+                            },
+                          ),
                         ),
                       ],
                       const SizedBox(height: AppSpacing.xl),
