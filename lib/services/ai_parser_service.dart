@@ -163,6 +163,7 @@ class AiParserService {
     final referenceNow = now ?? DateTime.now();
     final systemPrompt = _buildAssistantSystemPrompt(
       referenceNow,
+      userMessage: trimmed,
       existingTasks: existingTasks,
       recentMessages: recentMessages,
     );
@@ -205,8 +206,156 @@ class AiParserService {
         referencedTaskIds: parsed.referencedTaskIds,
         offTopic: parsed.offTopic,
         resolvedModel: fallback,
+        resolvedProviderName: config.displayName,
+        resolvedProviderType: config.id,
       );
     }
+  }
+
+  /// Processes a Cloud AI command with atomic Multi-Model, Multi-Key, and
+  /// Multi-Provider failover. Truncated or invalid JSON replies are completely
+  /// discarded in memory so partial state never touches tasks or backups.
+  Future<AiAssistantResponse> processChatCommandWithFailover(
+    String userMessage, {
+    required AiProviderConfig activeProvider,
+    required List<AiProviderConfig> allProviders,
+    Map<AiProviderType, List<String>> cachedModels = const {},
+    DateTime? now,
+    List<TaskItem> existingTasks = const [],
+    List<ChatMessage> recentMessages = const [],
+  }) async {
+    final trimmed = userMessage.trim();
+    if (trimmed.isEmpty) {
+      throw const AiParserException('Please enter a message or task command.');
+    }
+
+    final providerChain = <AiProviderConfig>[
+      if (activeProvider.hasKey) activeProvider,
+      for (final p in allProviders)
+        if (p.id != activeProvider.id && p.hasKey) p,
+    ];
+    if (providerChain.isEmpty) {
+      throw AiParserException(
+        '${activeProvider.displayName} API key is empty. Add and save a key in Profile.',
+      );
+    }
+
+    final referenceNow = now ?? DateTime.now();
+    final systemPrompt = _buildAssistantSystemPrompt(
+      referenceNow,
+      userMessage: trimmed,
+      existingTasks: existingTasks,
+      recentMessages: recentMessages,
+    );
+
+    const maxTotalAttempts = 8;
+    var attempts = 0;
+    AiParserException? lastError;
+
+    for (final provider in providerChain) {
+      if (provider.id == AiProviderType.custom &&
+          provider.baseUrl.trim().isEmpty) {
+        continue;
+      }
+
+      final keys = provider.apiKeys;
+      var models = _buildModelCandidates(
+        provider: provider,
+        cachedModels: cachedModels[provider.id] ?? const [],
+      );
+      if (models.isEmpty) continue;
+
+      var discoveredLiveModels = false;
+
+      for (final key in keys) {
+        if (attempts >= maxTotalAttempts) break;
+        var modelIdx = 0;
+        while (modelIdx < models.length && attempts < maxTotalAttempts) {
+          final model = models[modelIdx++];
+          attempts++;
+
+          final candidateConfig = provider.copyWith(
+            apiKey: key,
+            model: model,
+          );
+
+          try {
+            final rawReply = await _invokeChat(
+              config: candidateConfig,
+              systemPrompt: systemPrompt,
+              userPrompt: trimmed,
+              jsonMode: true,
+              timeout: _requestTimeout,
+            );
+            // Parse & validate strictly in memory before returning; broken JSON triggers failover.
+            final parsed = parseAssistantResponse(
+              rawReply,
+              fallbackDate: referenceNow,
+            );
+            return AiAssistantResponse(
+              reply: parsed.reply,
+              actions: parsed.actions,
+              referencedTaskIds: parsed.referencedTaskIds,
+              offTopic: parsed.offTopic,
+              resolvedModel: model,
+              resolvedProviderName: provider.displayName,
+              resolvedProviderType: provider.id,
+            );
+          } on AiParserException catch (e) {
+            lastError = e;
+
+            if (_isNetworkOfflineError(e.message)) {
+              rethrow;
+            }
+            if (_isAuthError(e.message, statusCode: e.statusCode)) {
+              // Invalid/revoked key -> move immediately to next backup key or provider.
+              break;
+            }
+            if (_isModelUnavailableError(e.message, statusCode: e.statusCode) &&
+                !discoveredLiveModels) {
+              discoveredLiveModels = true;
+              final live = await _safeFetchModels(candidateConfig);
+              for (final lm in live) {
+                if (!models.contains(lm) && models.length < 6) {
+                  models = [...models, lm];
+                }
+              }
+            }
+            // Retry next model for quota (429), truncated JSON, 5xx, timeout, or retired model.
+            continue;
+          }
+        }
+      }
+      if (attempts >= maxTotalAttempts) break;
+    }
+
+    throw lastError ??
+        const AiParserException(
+          'All configured AI models/keys reached their limit or failed. Please try again later.',
+        );
+  }
+
+  static List<String> _buildModelCandidates({
+    required AiProviderConfig provider,
+    required List<String> cachedModels,
+  }) {
+    final seen = <String>{};
+    final out = <String>[];
+
+    void addCandidate(String raw) {
+      final m = raw.trim();
+      if (m.isEmpty || _isNonTextModel(m) || !seen.add(m)) return;
+      out.add(m);
+    }
+
+    addCandidate(provider.model);
+    for (final m in cachedModels) {
+      addCandidate(m);
+    }
+    for (final m in provider.suggestedModels) {
+      addCandidate(m);
+    }
+    return out.take(4).toList();
   }
 
   /// Queries the provider's live `/models` endpoint using the pasted API key.
@@ -225,7 +374,7 @@ class AiParserService {
       final response = await _sendRequest(
         () => _client.get(
           uri,
-          headers: {'x-goog-api-key': config.apiKey.trim()},
+          headers: {'x-goog-api-key': config.primaryApiKey},
         ),
         timeout: _testTimeout,
       );
@@ -470,7 +619,7 @@ class AiParserService {
         uri,
         headers: {
           'Content-Type': 'application/json',
-          'x-goog-api-key': config.apiKey.trim(),
+          'x-goog-api-key': config.primaryApiKey,
         },
         body: jsonEncode(body),
       ),
@@ -492,6 +641,13 @@ class AiParserService {
       throw const AiParserException('Gemini returned no candidates.');
     }
     final first = candidates.first as Map<String, dynamic>;
+    final finishReason = (first['finishReason'] ?? '').toString().toUpperCase();
+    if (finishReason == 'MAX_TOKENS') {
+      throw const AiParserException(
+        'Gemini response was truncated before completing JSON.',
+        statusCode: 422,
+      );
+    }
     final content = first['content'] as Map<String, dynamic>?;
     final parts = content?['parts'] as List<dynamic>?;
     final text = parts
@@ -507,7 +663,7 @@ class AiParserService {
 
   Map<String, String> _openAiHeaders(AiProviderConfig config) => {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer ${config.apiKey.trim()}',
+        'Authorization': 'Bearer ${config.primaryApiKey}',
         if (config.id == AiProviderType.openRouter) ...{
           'HTTP-Referer': 'https://htodo.ai',
           'X-Title': 'H-TODO AI',
@@ -578,6 +734,13 @@ class AiParserService {
       throw AiParserException('${config.displayName} returned no choices.');
     }
     final first = choices.first as Map<String, dynamic>;
+    final finishReason = (first['finish_reason'] ?? '').toString().toLowerCase();
+    if (finishReason == 'length') {
+      throw AiParserException(
+        '${config.displayName} output was truncated before completing JSON.',
+        statusCode: 422,
+      );
+    }
     final message = first['message'] as Map<String, dynamic>?;
     final content = message?['content']?.toString() ?? '';
     if (content.trim().isEmpty) {
@@ -711,6 +874,13 @@ class AiParserService {
     return lower.contains('quota') ||
         lower.contains('rate limit') ||
         lower.contains('resource_exhausted');
+  }
+
+  static bool _isNetworkOfflineError(String message) {
+    final lower = message.toLowerCase();
+    return lower.contains('socketexception') ||
+        lower.contains('failed host lookup') ||
+        lower.contains('network is unreachable');
   }
 
   static Map<String, dynamic>? _decodeMap(String body) {
@@ -931,12 +1101,88 @@ Respond with ONLY a valid JSON object (no markdown fences, no commentary) matchi
     return (hour, minute);
   }
 
+  static bool _needsFullTaskContext(String userMessage) {
+    if (userMessage.trim().isEmpty) return true;
+    final lower = userMessage.toLowerCase();
+    const fullSignals = [
+      'delete',
+      'remove',
+      'cancel',
+      'clear',
+      'reschedule',
+      'move',
+      'shift',
+      'postpone',
+      'update',
+      'edit',
+      'change',
+      'complete',
+      'done',
+      'finish',
+      'uncomplete',
+      'reopen',
+      'subtask',
+      'syllabus',
+      'chapter',
+      'which',
+      'what',
+      'when',
+      'show',
+      'list',
+      'pending',
+      'overdue',
+      'series',
+      'ডিলিট',
+      'মুছ',
+      'বাতিল',
+      'বদল',
+      'পিছ',
+      'কোন',
+      'কী',
+      'কি',
+      'কবে',
+      'দেখাও',
+      'শেষ',
+      'বাকি',
+      'সিলেবাস',
+      'kor',
+      'koro',
+      'bad',
+      'sora',
+      'kob',
+      'ki ',
+    ];
+    return fullSignals.any(lower.contains);
+  }
+
+  static bool _needsRecentHistory(String userMessage) {
+    final trimmed = userMessage.trim();
+    if (trimmed.isEmpty) return true;
+    // Keep short conversational commands context-aware while skipping history on long notice dumps.
+    if (!trimmed.contains('\n') && trimmed.length <= 140) return true;
+    final lower = trimmed.toLowerCase();
+    return RegExp(
+      r'\b(it|that|this|them|those|same|previous|again|undo|eta|ota|sheta)\b',
+    ).hasMatch(lower) ||
+        lower.contains('এটা') ||
+        lower.contains('ওটা') ||
+        lower.contains('সেটা') ||
+        lower.contains('আগের') ||
+        lower.contains('ওই');
+  }
+
   static String _buildAssistantSystemPrompt(
     DateTime now, {
+    String userMessage = '',
     List<TaskItem> existingTasks = const [],
     List<ChatMessage> recentMessages = const [],
   }) {
-    final today = DateFormat('yyyy-MM-dd (EEEE), HH:mm').format(now);
+    final today = DateFormat('yyyy-MM-dd (EEE), HH:mm').format(now);
+    final fullContext = _needsFullTaskContext(userMessage);
+    final includeSubtasks = userMessage.toLowerCase().contains('subtask') ||
+        userMessage.toLowerCase().contains('syllabus') ||
+        userMessage.toLowerCase().contains('chapter') ||
+        userMessage.contains('সিলেবাস');
 
     final seriesGroups = <String, List<TaskItem>>{};
     final standaloneTasks = <TaskItem>[];
@@ -955,12 +1201,12 @@ Respond with ONLY a valid JSON object (no markdown fences, no commentary) matchi
         standaloneTasks.addAll(entry.value);
         continue;
       }
+      if (!fullContext && seriesLines.length >= 5) continue;
       final group = List<TaskItem>.from(entry.value)
         ..sort((a, b) => a.dateKey.compareTo(b.dateKey));
       final first = group.first;
       final last = group.last;
       final pendingCount = group.where((t) => !t.isCompleted).length;
-      final doneCount = group.length - pendingCount;
       final timesSet = group
           .where((t) => t.hasDueTime)
           .map(
@@ -970,138 +1216,73 @@ Respond with ONLY a valid JSON object (no markdown fences, no commentary) matchi
           .toSet()
           .toList()
         ..sort();
-      final timesLabel = timesSet.isEmpty ? 'default' : timesSet.join(', ');
+      final timesLabel = timesSet.isEmpty ? 'default' : timesSet.join(',');
       seriesLines.add(
-        '- SERIES seriesId=${entry.key} | title="${first.title}" | '
-        'course="${first.courseOrCategory}" | type=${first.type.name} | '
-        'times=[$timesLabel] | pending=$pendingCount done=$doneCount | '
-        'dates=${first.dateKey}..${last.dateKey}',
+        '- SERIES seriesId=${entry.key} | title="${first.title}" | type=${first.type.name} | times=[$timesLabel] | pending=$pendingCount | ${first.dateKey}..${last.dateKey}',
       );
     }
 
+    final pendingCap = fullContext ? 25 : 15;
+    final doneCap = fullContext ? 5 : 0;
     final pendingFirst = [
-      ...standaloneTasks.where((t) => !t.isCompleted),
-      ...standaloneTasks.where((t) => t.isCompleted).take(10),
-    ].take(40).toList();
+      ...standaloneTasks.where((t) => !t.isCompleted).take(pendingCap),
+      if (doneCap > 0)
+        ...standaloneTasks.where((t) => t.isCompleted).take(doneCap),
+    ];
 
     final standaloneLines = pendingFirst.map((t) {
-      final subs = t.subtasks.isEmpty
-          ? 'none'
-          : t.subtasks
-              .map((s) => '${s.isCompleted ? "[x]" : "[ ]"} ${s.title}')
-              .join('; ');
       final dueTime = t.formattedDueTime ?? 'none';
-      return '- id=${t.id} | status=${t.isCompleted ? "DONE" : "PENDING"} | '
-          'title="${t.title}" | course="${t.courseOrCategory}" | '
-          'type=${t.type.name} | due=${t.dateKey} $dueTime | '
-          'priority=${t.priority.name} | subtasks=[$subs]';
+      final status = t.isCompleted ? 'DONE' : 'PENDING';
+      if (!fullContext) {
+        return '- id=${t.id} | "${t.title}" | ${t.courseOrCategory} | ${t.dateKey} $dueTime';
+      }
+      final subBlock = includeSubtasks && t.subtasks.isNotEmpty
+          ? ' | subs=[${t.subtasks.map((s) => '${s.isCompleted ? "[x]" : "[ ]"} ${s.title}').join('; ')}]'
+          : '';
+      return '- id=${t.id} | $status | "${t.title}" | "${t.courseOrCategory}" | ${t.type.name} | ${t.dateKey} $dueTime | ${t.priority.name}$subBlock';
     }).toList();
 
     final allLines = [...seriesLines, ...standaloneLines];
     final tasksBlock =
-        allLines.isEmpty ? 'No saved tasks yet.' : allLines.join('\n');
+        allLines.isEmpty ? 'None.' : allLines.join('\n');
 
+    final useHistory = _needsRecentHistory(userMessage);
     final historyList =
-        recentMessages.where((m) => !m.isError).toList();
-    final recentSlice = historyList.length <= 6
+        useHistory ? recentMessages.where((m) => !m.isError).toList() : const <ChatMessage>[];
+    final recentSlice = historyList.length <= 4
         ? historyList
-        : historyList.sublist(historyList.length - 6);
+        : historyList.sublist(historyList.length - 4);
     final historyBlock = recentSlice.isEmpty
         ? ''
-        : '''
-
-Recent chat context (oldest to newest, for resolving pronouns like "it", "that", "eta", "এটা"):
-${recentSlice.map((m) {
-            final roleLabel = m.role == ChatRole.user ? 'User' : 'Assistant';
-            final snippet = m.text.replaceAll('\n', ' ').trim();
-            final short = snippet.length > 220
-                ? '${snippet.substring(0, 220)}...'
-                : snippet;
-            return '$roleLabel: $short';
-          }).join('\n')}
-''';
+        : '\nRecent chat:\n${recentSlice.map((m) {
+              final roleLabel = m.role == ChatRole.user ? 'U' : 'A';
+              final snippet = m.text.replaceAll('\n', ' ').trim();
+              final short = snippet.length > 140
+                  ? '${snippet.substring(0, 140)}...'
+                  : snippet;
+              return '$roleLabel: $short';
+            }).join('\n')}';
 
     return '''
-You are H-TODO AI, a dedicated To-Do, Academic Schedule, Reminder, and Syllabus Assistant.
-Current local date & time: $today.
+You are H-TODO AI (To-Do, Academic Schedule, Reminder & Syllabus Assistant). Now: $today.
 
-STRICT DOMAIN BOUNDARY:
-- You ONLY manage the user's tasks, assignments, class tests, exams, labs, meetings, syllabi/checklists, deadlines, and reminders, or answer questions about their saved task list.
-- If the user asks anything unrelated (general ChatGPT trivia, programming help, stories, math homework, weather, chitchat), DO NOT answer that request. Set "offTopic": true, "actions": [], "referencedTaskIds": [], and write a polite 1-sentence refusal in the user's language stating that you only manage H-TODO AI tasks and schedules.
+RULES:
+1. DOMAIN: Only manage user tasks, deadlines, syllabi & reminders. For unrelated trivia/coding/chat set "offTopic":true, "actions":[], and politely refuse in 1 sentence in user's language.
+2. LANGUAGE: Understand ANY language (English, Bengali / বাংলা, Banglish, digits ০-৯, relative dates). Always write "reply" (1-3 concise sentences, no code blocks) in the user's primary language. Format dates "YYYY-MM-DD" and 24h times "HH:mm" (or null).
+3. ACTIONS:
+- "add": 1-5 non-repeating tasks. Keep matching existing "title" & "courseOrCategory" when repeating a notice so details merge without duplicating.
+- "add_recurring": ALWAYS 1 single "add_recurring" action for ANY repeating schedule (daily, every_n_days, weekly, monthly; weekdays 1=Mon..7=Sun; times ["08:00","20:00"] or [] for defaults; durationDays/durationMonths/endDate/maxOccurrences/dayOfMonth).
+- "complete" / "uncomplete" / "delete" / "reschedule" / "update": single task by "taskId" or "taskQuery". Use "clearDueTime":true only when removing time.
+- "bulk_delete" / "bulk_reschedule" / "bulk_update" / "bulk_complete" / "bulk_uncomplete": 1 bulk action with "filter": {"seriesId","titleQuery","courseQuery","taskType","dateFrom","dateTo","matchTime","completedOnly","pendingOnly","confirmAll"}. For reschedule/update include "shiftDays" or target fields. Set "confirmAll":true ONLY if explicitly asked to affect ALL tasks.
+- "complete_subtask" / "uncomplete_subtask": toggle "subtaskTitle".
+- "update_reminder_settings": update global defaults ("dayBeforeTime","endOfDayTime","remindersEnabled").
+- Queries: set "actions":[], put matching IDs in "referencedTaskIds", summarize in "reply". If ambiguous single-task delete/edit matches 2+ items, ask clarification with "actions":[].
 
-MULTILINGUAL RULES:
-- Understand the user's message in ANY language (English, Bengali / বাংলা, Banglish, Hindi, Arabic, Spanish, etc.), including non-Latin digits (e.g. ০-৯) and relative dates (tomorrow, next Monday, 2 days later, কাল, আগামী শুক্রবার).
-- ALWAYS write "reply" clearly and concisely (1-3 sentences, no markdown code blocks) in the SAME primary language the user wrote in.
-- Convert all dates to "YYYY-MM-DD" and times to 24-hour "HH:mm" (or null).
-
-ACTIONS YOU CAN PERFORM:
-- "add": Create 1 to 5 individual non-repeating tasks from notices or commands. If an identical existing task already exists on the same date/time and the user is repeating a notice, reuse its exact title & courseOrCategory so duplicate protection can merge updates cleanly.
-- "add_recurring": ALWAYS use 1 single "add_recurring" action (NEVER emit >5 individual "add" actions) for ANY repeating, daily, every-N-days, weekly, or monthly schedule (e.g., next 40 days, next 1 year, twice a day, every Mon/Wed/Fri, 1st of every month). Set "title", "courseOrCategory", "taskType", "priority", "notes", "addSubtasks", "frequency" ("daily"|"every_n_days"|"weekly"|"monthly"), "interval" (default 1), "startDate" ("YYYY-MM-DD"), "endDate" (optional), "durationDays" (optional int, e.g. 40), "durationMonths" (optional int, e.g. 6 or 12 for 1 year), "maxOccurrences" (optional int), "weekdays" (optional [1..7], 1=Mon..7=Sun), "dayOfMonth" (optional 1..31), "times" (array of 24h "HH:mm", e.g. ["08:00", "20:00"], or [] for default alerts).
-- "complete" / "uncomplete": Mark a single existing task completed or pending.
-- "delete": Remove/delete a single existing task.
-- "reschedule": Change due date and/or due time of a single existing task. Leave "dueTime" omitted if user only moves the date, or set "clearDueTime": true if removing time.
-- "update": Change a single task's "title", "courseOrCategory", "type", "priority", "notes", or "addSubtasks".
-- "bulk_delete", "bulk_reschedule", "bulk_update", "bulk_complete", "bulk_uncomplete": ALWAYS use 1 single bulk action when deleting, cancelling, completing, rescheduling, or updating a SERIES, a MONTH or DATE RANGE ("this month", "December", "next 7 days"), or ALL matching tasks! Include "filter": { "seriesId": "string or null", "titleQuery": "string or null", "courseQuery": "string or null", "taskType": "enum or null", "dateFrom": "YYYY-MM-DD or null", "dateTo": "YYYY-MM-DD or null", "matchTime": "HH:mm or null", "completedOnly": false, "pendingOnly": false, "confirmAll": false } (include only relevant filters). For "bulk_reschedule"/"bulk_update", also pass "shiftDays" (int, e.g. 2 to postpone 2 days) and/or "dueDate", "dueTime", "clearDueTime", "title", "courseOrCategory", "taskType", "priority", "notes", "addSubtasks". Only set "confirmAll": true if user explicitly confirms removing/updating ALL tasks.
-- "complete_subtask" / "uncomplete_subtask": Check or uncheck a syllabus item ("subtaskTitle") inside an existing task.
-- "update_reminder_settings": Only when the user asks to change the global default reminder schedule (defaults are 16:00 day-before & 22:00 due-day) or pause/enable notifications globally. Provide "dayBeforeTime" ("HH:mm"), "endOfDayTime" ("HH:mm"), and/or "remindersEnabled" (true/false).
-- Queries ("What is due tomorrow?", "Which tasks are pending?", "কাল কী আছে?"): Set "actions": [], put matching IDs in "referencedTaskIds", and summarize concisely in "reply".
-
-AMBIGUITY SAFETY:
-- Match existing tasks using exact "taskId", or series using exact "seriesId" from the list below.
-- If a single-task delete/complete/reschedule could refer to 2+ unrelated tasks and user did NOT ask for bulk action, set "actions": [] and ask a short clarifying question.
-
-Current saved tasks & repeating series:
+Saved tasks/series:
 $tasksBlock$historyBlock
 
-Respond with ONLY a valid JSON object matching this schema:
-{
-  "reply": "string in the user's language",
-  "offTopic": false,
-  "referencedTaskIds": ["existing-task-id"],
-  "actions": [
-    {
-      "type": "add|add_recurring|complete|uncomplete|delete|reschedule|update|bulk_delete|bulk_reschedule|bulk_update|bulk_complete|bulk_uncomplete|complete_subtask|uncomplete_subtask|update_reminder_settings",
-      "taskId": "exact existing id or null",
-      "taskQuery": "task title fallback if needed",
-      "subtaskTitle": "subtask name for subtask actions",
-      "dueDate": "YYYY-MM-DD",
-      "dueTime": "HH:mm or null",
-      "clearDueTime": false,
-      "title": "string",
-      "courseOrCategory": "string",
-      "taskType": "assignment|classTest|exam|lab|meeting|task",
-      "priority": "high|medium|low",
-      "notes": "string",
-      "addSubtasks": ["string"],
-      "dayBeforeTime": "HH:mm",
-      "endOfDayTime": "HH:mm",
-      "remindersEnabled": true,
-      "frequency": "daily|every_n_days|weekly|monthly",
-      "interval": 1,
-      "startDate": "YYYY-MM-DD",
-      "endDate": "YYYY-MM-DD",
-      "durationDays": 40,
-      "durationMonths": 12,
-      "maxOccurrences": 80,
-      "weekdays": [1, 3, 5],
-      "dayOfMonth": 1,
-      "times": ["08:00", "20:00"],
-      "shiftDays": 0,
-      "filter": {
-        "seriesId": "exact seriesId or null",
-        "titleQuery": "string or null",
-        "courseQuery": "string or null",
-        "taskType": "assignment|classTest|exam|lab|meeting|task or null",
-        "dateFrom": "YYYY-MM-DD or null",
-        "dateTo": "YYYY-MM-DD or null",
-        "matchTime": "HH:mm or null",
-        "completedOnly": false,
-        "pendingOnly": false,
-        "confirmAll": false
-      }
-    }
-  ]
-}
+Return ONLY JSON:
+{"reply":"string","offTopic":false,"referencedTaskIds":["id"],"actions":[{"type":"add|add_recurring|complete|uncomplete|delete|reschedule|update|bulk_delete|bulk_reschedule|bulk_update|bulk_complete|bulk_uncomplete|complete_subtask|uncomplete_subtask|update_reminder_settings","taskId":null,"taskQuery":null,"subtaskTitle":null,"dueDate":"YYYY-MM-DD","dueTime":"HH:mm","clearDueTime":false,"title":"","courseOrCategory":"","taskType":"assignment|classTest|exam|lab|meeting|task","priority":"high|medium|low","notes":"","addSubtasks":[],"dayBeforeTime":null,"endOfDayTime":null,"remindersEnabled":true,"frequency":"daily|every_n_days|weekly|monthly","interval":1,"startDate":"YYYY-MM-DD","endDate":null,"durationDays":null,"durationMonths":null,"maxOccurrences":null,"weekdays":[],"dayOfMonth":null,"times":[],"shiftDays":0,"filter":{"seriesId":null,"titleQuery":null,"courseQuery":null,"taskType":null,"dateFrom":null,"dateTo":null,"matchTime":null,"completedOnly":false,"pendingOnly":false,"confirmAll":false}}]}
 ''';
   }
 

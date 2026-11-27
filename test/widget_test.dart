@@ -706,4 +706,87 @@ void main() {
     );
     expect(await storage.loadLastNotifiedUpdateVersion(), isNull);
   });
+
+  testWidgets(
+      'AI Auto-Plan quick presets run offline Q&A and templates with zero API keys',
+      (WidgetTester tester) async {
+    GoogleFonts.config.allowRuntimeFetching = false;
+    // Test font (Ahem) renders wide square glyphs that wrap the no-key banner and hint heavily,
+    // so give the chat a taller viewport matching Test 4 to leave space for message bubbles.
+    tester.view.physicalSize = const Size(390, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    SharedPreferences.setMockInitialValues({});
+    final storage = StorageService();
+    final now = DateTime.now();
+    await storage.saveTasks([
+      TaskItem(
+        id: 'widget_today_1',
+        notificationBaseId: 101,
+        title: 'Widget Today Task',
+        dueDate: DateTime(now.year, now.month, now.day),
+        dueHour: 15,
+        dueMinute: 0,
+        createdAt: now,
+      ),
+    ]);
+
+    await tester.pumpWidget(
+      HTodoApp(
+        storage: storage,
+        notifications: NotificationService(),
+        cloudBackup: CloudBackupService.disabled(),
+        securityService: SecurityService.disabled(),
+        autoCheckUpdates: false,
+        skipSplash: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.bySemanticsLabel('AI Auto-Plan').first);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'Quick presets work offline (0 tokens). Add a free API key in Profile for long notices.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Today'), findsOneWidget);
+
+    await tester.tap(find.text('Today'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('What is due today?'), findsOneWidget);
+    expect(find.text('Local • Instant'), findsOneWidget);
+    expect(find.textContaining('1 task due today:'), findsOneWidget);
+    expect(find.textContaining('Widget Today Task'), findsNWidgets(2));
+
+    final quickTaskFinder = find.text('Quick Task');
+    if (quickTaskFinder.evaluate().isEmpty) {
+      await tester.scrollUntilVisible(
+        quickTaskFinder,
+        150,
+        scrollable: find.byWidgetPredicate(
+          (w) => w is Scrollable && w.axisDirection == AxisDirection.right,
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    await tester.ensureVisible(quickTaskFinder);
+    await tester.pumpAndSettle();
+    await tester.tap(quickTaskFinder);
+    await tester.pumpAndSettle();
+
+    final textField = tester.widget<TextField>(find.byType(TextField).first);
+    expect(textField.controller?.text, 'Tomorrow 10:00 AM ');
+
+    await tester.tap(find.byTooltip('Hide quick presets'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Quick Task'), findsNothing);
+    expect(find.byTooltip('Show quick presets'), findsOneWidget);
+  });
 }

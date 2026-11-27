@@ -39,7 +39,25 @@ class AiProviderConfig {
   final List<String> suggestedModels;
   final String hintText;
 
-  bool get hasKey => apiKey.trim().isNotEmpty;
+  /// Parses one or more backup API keys separated by commas, semicolons, or new lines.
+  List<String> get apiKeys {
+    final seen = <String>{};
+    final out = <String>[];
+    for (final part in apiKey.split(RegExp(r'[\n,;]+'))) {
+      final k = part.trim();
+      if (k.isNotEmpty && seen.add(k)) {
+        out.add(k);
+      }
+    }
+    return out;
+  }
+
+  String get primaryApiKey {
+    final keys = apiKeys;
+    return keys.isEmpty ? '' : keys.first;
+  }
+
+  bool get hasKey => apiKeys.isNotEmpty;
 
   AiProviderConfig copyWith({
     String? apiKey,

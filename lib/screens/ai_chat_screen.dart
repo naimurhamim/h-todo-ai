@@ -9,6 +9,7 @@ import '../models/task_item.dart';
 import '../providers/ai_settings_provider.dart';
 import '../providers/chat_provider.dart';
 import '../providers/task_provider.dart';
+import '../services/local_command_parser.dart';
 import '../theme/app_tokens.dart';
 import '../widgets/glass_surface.dart';
 import '../widgets/task_card.dart';
@@ -43,6 +44,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
   final ScrollController _scrollCtrl = ScrollController();
   List<TaskItem> _pendingUndoTasks = const [];
   Timer? _undoBannerTimer;
+  bool _showPresets = true;
 
   @override
   void dispose() {
@@ -70,8 +72,20 @@ class _AiChatScreenState extends State<AiChatScreen> {
     }
   }
 
-  Future<void> _send() async {
-    final text = _inputCtrl.text.trim();
+  void _handlePresetTap(ChatPreset preset, {required bool isSending}) {
+    if (isSending) return;
+    if (preset.kind == ChatPresetKind.instantQa) {
+      _send(overrideText: preset.command);
+      return;
+    }
+    _inputCtrl.value = TextEditingValue(
+      text: preset.command,
+      selection: TextSelection.collapsed(offset: preset.command.length),
+    );
+  }
+
+  Future<void> _send({String? overrideText}) async {
+    final text = (overrideText ?? _inputCtrl.text).trim();
     if (text.isEmpty) return;
 
     final chatProvider = context.read<ChatProvider>();
@@ -79,14 +93,26 @@ class _AiChatScreenState extends State<AiChatScreen> {
     final aiSettings = context.read<AiSettingsProvider>();
     final activeProvider = aiSettings.activeProvider;
 
-    _inputCtrl.clear();
+    if (overrideText == null) {
+      _inputCtrl.clear();
+    }
     final deletedTasks = await chatProvider.sendScheduleMessage(
       text,
       activeProvider: activeProvider,
       taskProvider: taskProvider,
+      allProviders: aiSettings.providerList,
+      cachedModels: aiSettings.cachedModelsMap,
+      reminderSettings: aiSettings.reminderSettings,
       onModelResolved: (newModel) => aiSettings.updateProviderConfig(
         activeProvider.copyWith(model: newModel),
       ),
+      onProviderModelResolved: (type, newModel) {
+        final target = aiSettings.providers[type];
+        if (target == null) return Future.value();
+        return aiSettings.updateProviderConfig(
+          target.copyWith(model: newModel),
+        );
+      },
       onReminderSettingsAction: (action) async {
         final cur = aiSettings.reminderSettings;
         final next = cur.copyWith(
@@ -173,7 +199,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
                   ],
                 ),
               ),
-              if (!aiSettings.hasActiveApiKey)
+              if (!aiSettings.hasAnyApiKey)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(
                     AppSpacing.lg,
@@ -196,7 +222,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
                         const SizedBox(width: AppSpacing.md),
                         Expanded(
                           child: Text(
-                            'Paste a free Gemini, Groq, or Grok API key in Profile to parse schedules.',
+                            'Quick presets work offline (0 tokens). Add a free API key in Profile for long notices.',
                             style: textTheme.bodySmall?.copyWith(
                               color: colors.textPrimary,
                             ),
@@ -260,58 +286,108 @@ class _AiChatScreenState extends State<AiChatScreen> {
               Padding(
                 padding: EdgeInsets.fromLTRB(
                   AppSpacing.lg,
-                  AppSpacing.sm,
+                  AppSpacing.xs,
                   AppSpacing.lg,
                   wide ? AppSpacing.lg : AppLayout.navClearance,
                 ),
-                child: GlassContainer(
-                  borderRadius: AppRadius.xl,
-                  blur: 0,
-                  elevated: true,
-                  padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.md,
-                    AppSpacing.xs,
-                    AppSpacing.xs,
-                    AppSpacing.xs,
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _inputCtrl,
-                          minLines: 1,
-                          maxLines: 5,
-                          textInputAction: TextInputAction.newline,
-                          decoration: const InputDecoration(
-                            hintText:
-                                'Add a schedule, complete, reschedule, or remove tasks...',
-                            border: InputBorder.none,
-                            enabledBorder: InputBorder.none,
-                            focusedBorder: InputBorder.none,
-                            filled: false,
-                            contentPadding: EdgeInsets.symmetric(
-                              horizontal: AppSpacing.sm,
-                              vertical: AppSpacing.md,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    AnimatedSize(
+                      duration: const Duration(milliseconds: 200),
+                      curve: Curves.easeOutCubic,
+                      child: _showPresets
+                          ? Padding(
+                              padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                              child: SizedBox(
+                                height: 36,
+                                child: ListView.separated(
+                                  scrollDirection: Axis.horizontal,
+                                  itemCount: LocalCommandParser.presets.length,
+                                  separatorBuilder: (_, _) =>
+                                      const SizedBox(width: AppSpacing.xs),
+                                  itemBuilder: (context, idx) {
+                                    final preset = LocalCommandParser.presets[idx];
+                                    final isQa =
+                                        preset.kind == ChatPresetKind.instantQa;
+                                    return _PresetChip(
+                                      preset: preset,
+                                      isQa: isQa,
+                                      enabled: !chatProvider.isSending,
+                                      onTap: () => _handlePresetTap(
+                                        preset,
+                                        isSending: chatProvider.isSending,
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+                    GlassContainer(
+                      borderRadius: AppRadius.xl,
+                      blur: 0,
+                      elevated: true,
+                      padding: const EdgeInsets.fromLTRB(
+                        AppSpacing.xs,
+                        AppSpacing.xs,
+                        AppSpacing.xs,
+                        AppSpacing.xs,
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          IconButton(
+                            tooltip: _showPresets
+                                ? 'Hide quick presets'
+                                : 'Show quick presets',
+                            onPressed: () =>
+                                setState(() => _showPresets = !_showPresets),
+                            icon: Icon(
+                              Icons.bolt_rounded,
+                              color: _showPresets
+                                  ? colors.primary
+                                  : colors.textSecondary,
                             ),
                           ),
-                        ),
-                      ),
-                      const SizedBox(width: AppSpacing.xs),
-                      Semantics(
-                        label: 'Send schedule to AI',
-                        button: true,
-                        child: FilledButton(
-                          onPressed: chatProvider.isSending ? null : _send,
-                          style: FilledButton.styleFrom(
-                            minimumSize: const Size(48, 48),
-                            padding: EdgeInsets.zero,
+                          Expanded(
+                            child: TextField(
+                              controller: _inputCtrl,
+                              minLines: 1,
+                              maxLines: 5,
+                              textInputAction: TextInputAction.newline,
+                              decoration: const InputDecoration(
+                                hintText:
+                                    'Add a schedule, complete, reschedule, or remove tasks...',
+                                border: InputBorder.none,
+                                enabledBorder: InputBorder.none,
+                                focusedBorder: InputBorder.none,
+                                filled: false,
+                                contentPadding: EdgeInsets.symmetric(
+                                  horizontal: AppSpacing.sm,
+                                  vertical: AppSpacing.md,
+                                ),
+                              ),
+                            ),
                           ),
-                          child: const Icon(Icons.arrow_upward_rounded),
-                        ),
+                          const SizedBox(width: AppSpacing.xs),
+                          Semantics(
+                            label: 'Send schedule to AI',
+                            button: true,
+                            child: FilledButton(
+                              onPressed: chatProvider.isSending ? null : _send,
+                              style: FilledButton.styleFrom(
+                                minimumSize: const Size(48, 48),
+                                padding: EdgeInsets.zero,
+                              ),
+                              child: const Icon(Icons.arrow_upward_rounded),
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -362,6 +438,56 @@ class _AiChatScreenState extends State<AiChatScreen> {
     ),
   ),
   );
+  }
+}
+
+class _PresetChip extends StatelessWidget {
+  const _PresetChip({
+    required this.preset,
+    required this.isQa,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final ChatPreset preset;
+  final bool isQa;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.appColors;
+    final textTheme = Theme.of(context).textTheme;
+
+    return GlassContainer(
+      borderRadius: AppRadius.pill,
+      blur: 0,
+      elevated: true,
+      fillColor: isQa ? colors.primarySoft : null,
+      borderColor: isQa
+          ? colors.primary.withValues(alpha: 0.45)
+          : colors.glassBorder,
+      onTap: enabled ? onTap : null,
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isQa ? Icons.bolt_rounded : Icons.edit_note_rounded,
+            size: 14,
+            color: isQa ? colors.primary : colors.textSecondary,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            preset.label,
+            style: textTheme.labelMedium?.copyWith(
+              color: isQa ? colors.primary : colors.textPrimary,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

@@ -44,6 +44,11 @@ class AiSettingsProvider extends ChangeNotifier {
   AiProviderType get activeProviderType => _activeProviderType;
   AiProviderConfig get activeProvider => _providers[_activeProviderType]!;
   bool get hasActiveApiKey => activeProvider.hasKey;
+  bool get hasAnyApiKey => _providers.values.any((p) => p.hasKey);
+  Map<AiProviderType, List<String>> get cachedModelsMap => {
+        for (final entry in _providers.entries)
+          entry.key: modelsForProvider(entry.key),
+      };
   ReminderSettings get reminderSettings => _reminderSettings;
   ThemeMode get themeMode => _reminderSettings.resolvedThemeMode;
   bool get isLoaded => _loaded;

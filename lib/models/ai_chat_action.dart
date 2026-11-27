@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
+import 'ai_provider_config.dart';
 import 'task_item.dart';
 
 /// Action kinds the multilingual H-TODO AI chat assistant can perform.
@@ -481,6 +482,9 @@ class AiAssistantResponse {
     this.referencedTaskIds = const [],
     this.offTopic = false,
     this.resolvedModel,
+    this.resolvedProviderName,
+    this.resolvedProviderType,
+    this.handledLocally = false,
   });
 
   final String reply;
@@ -488,4 +492,7 @@ class AiAssistantResponse {
   final List<String> referencedTaskIds;
   final bool offTopic;
   final String? resolvedModel;
+  final String? resolvedProviderName;
+  final AiProviderType? resolvedProviderType;
+  final bool handledLocally;
 }

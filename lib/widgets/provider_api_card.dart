@@ -276,8 +276,8 @@ class _ProviderApiCardState extends State<ProviderApiCard> {
               _modelStatusText = null;
             }),
             decoration: InputDecoration(
-              labelText: 'API Key',
-              hintText: widget.config.hintText,
+              labelText: 'API Key(s)',
+              hintText: '${widget.config.hintText} (comma for backup keys)',
               suffixIcon: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
