@@ -14,13 +14,13 @@
       heroEyebrow: 'Android App • Free & Open Source',
       heroTitle: 'Turn Raw Notices & Natural Speech into an Exact Daily Plan',
       heroSubtitle:
-        'Built with frosted Light and Dark glassmorphism, H-TODO AI extracts assignments, exams, syllabi, and up to 400 recurring tasks in English, Bengali, or Banglish — backed by a 99-alarm rolling exact reminder engine and private Google Drive sync.',
+        'Frosted Light & Dark glass Android planner with 0-token offline quick presets, multilingual AI Auto-Plan & auto-failover, 21+ custom task icons, 99-alarm exact reminders, and quiet Google Drive sync.',
       heroPrimaryCta: 'Download Latest APK',
       heroSecondaryCta: 'Explore Live Interface',
       metricRecurring: 'Recurring Tasks / Cmd',
       metricAlarms: 'Rolling Exact Alarms',
       metricZeroCostVal: 'Free',
-      metricZeroCost: 'BYOK & Private Drive',
+      metricZeroCost: 'Offline Presets & Free AI',
       exploreKicker: 'Interactive Interface Tour',
       exploreTitle: 'Explore Every Screen Like Running the Real Software',
       exploreDesc:
@@ -36,24 +36,24 @@
       whyTitle: 'Why H-TODO AI Stands Out',
       whyDesc:
         'Designed to eliminate missed exams, slow manual form-filling, free AI token timeouts, and privacy compromises.',
-      why1Title: '1-Second Recurring & Bulk Rule Engine',
+      why1Title: 'Offline Quick Presets & 400-Task Engine',
       why1Body:
-        'Instead of waiting for slow 80-task JSON outputs, AI generates a compact rule and the app expands up to 400 tasks (366 days) locally — plus bulk delete, reschedule, and instant Undo.',
-      why2Title: 'Multilingual Notices & Commands',
+        'Run 1-tap offline Q&A (Today, Tomorrow, Overdue) and routine templates with 0 tokens, or expand up to 400 recurring tasks locally with instant Undo.',
+      why2Title: 'Multilingual AI & 21+ Custom Types',
       why2Body:
-        'Paste raw university notices or type natural instructions in English, Bengali script, or Banglish. Extracts course titles, deadlines, times, and syllabus checklists with smart duplicate merging.',
-      why3Title: 'Strict Date-Based 99-Alarm Window',
+        'Extracts English, Bengali, or Banglish notices into checklists, with 21 built-in icons (Mail, Travel, Bank, Institution & more) plus your own custom categories.',
+      why3Title: 'Exact Alarms & Today-First Timeline',
       why3Body:
-        'Custom due times override default alerts so tasks never double-fire. Respects Android OS alarm caps by queueing the soonest 99 exact alarms chronologically and rolling automatically on launch.',
-      why4Title: 'Zero-Server Google Drive Sync',
+        'Custom times override defaults so alerts never double-fire inside a 99-alarm rolling queue, while All Scheduled opens straight to Today.',
+      why4Title: 'Quiet Private Google Drive Sync',
       why4Body:
-        'Your tasks stay offline on your phone and sync privately to your personal Google Drive appDataFolder with offline delete tombstones, plus portable JSON Export and Merge/Replace Import.',
-      why5Title: '100% Free BYOK + Key Guidebook',
+        'Syncs silently in the background to your personal Drive without repeated sign-in prompts or popups, plus portable JSON Export/Import.',
+      why5Title: 'Free BYOK + Auto-Failover',
       why5Body:
-        'No ads or paywalls. Bring your own free key from Groq (Recommended Fast), Gemini, OpenRouter, xAI Grok, or any custom endpoint using the built-in step-by-step API Key Guidebook.',
-      why6Title: 'PIN + Biometric Glass Experience',
+        'Add free keys from Groq, Gemini, OpenRouter, or Grok (with backup keys) — switches models or providers automatically if a quota limit hits.',
+      why6Title: 'PIN + Biometric Lock & Auto Updates',
       why6Body:
-        'Lock your plans and API keys behind a 4-digit PIN and fingerprint unlock on app launch or resume, inside a crafted Light & Dark Glass UI with built-in GitHub update checks.',
+        '4-digit PIN and fingerprint unlock keep plans and keys private inside a Light & Dark Glass UI with quiet GitHub update alerts.',
       downloadTitle: 'Download H-TODO AI for Android',
       downloadDesc:
         'Install the latest verified release APK directly from GitHub Releases. Includes in-app update checking so future upgrades notify you inside Profile.',
@@ -64,8 +64,8 @@
       quickStepsHeading: '3-Step Quick Start',
       qs1Title: 'Install the APK',
       qs1Body: 'Download the release APK above and allow app installation on your Android device.',
-      qs2Title: 'Paste Free API Key',
-      qs2Body: 'Open Profile -> Active AI and follow the built-in Guidebook to add a free Groq or Gemini key.',
+      qs2Title: 'Optional Free AI Key',
+      qs2Body: 'Offline presets work immediately. Add a free Groq or Gemini key in Profile for long notices.',
       qs3Title: 'Auto-Plan & Sync',
       qs3Body: 'Paste class notices or type recurring goals in English or Bengali, then enable optional Google Drive backup.',
       devKicker: 'Developer & Creator',
@@ -82,13 +82,13 @@
       heroEyebrow: 'অ্যান্ড্রয়েড অ্যাপ • সম্পূর্ণ ফ্রি ও ওপেন সোর্স',
       heroTitle: 'যেকোনো নোটিশ বা সাধারণ কথায় তৈরি করুন নিখুঁত দৈনিক প্ল্যান',
       heroSubtitle:
-        'আধুনিক লাইট ও ডার্ক গ্লাসমরফিজম ডিজাইনে তৈরি H-TODO AI বাংলা, ইংরেজি বা বাংলিশ নোটিশ থেকে অ্যাসাইনমেন্ট, পরীক্ষা, সিলেবাস এবং এক কমান্ডেই ৪০০টি পর্যন্ত রিকারিং টাস্ক তৈরি করে — সাথে ৯৯-অ্যালার্ম এক্স্যাক্ট রিমাইন্ডার ও প্রাইভেট Google Drive ব্যাকআপ।',
+        'আধুনিক লাইট ও ডার্ক গ্লাস ডিজাইনে তৈরি H-TODO AI-তে আছে ০-টোকেনের অফলাইন কুইক প্রিসেট, বাংলা-ইংরেজি AI অটো-প্ল্যান ও অটো-ফেইলওভার, ২১+ কাস্টম টাস্ক আইকন, ৯৯-অ্যালার্ম এক্স্যাক্ট রিমাইন্ডার এবং নীরব Google Drive ব্যাকআপ।',
       heroPrimaryCta: 'সর্বশেষ APK ডাউনলোড করুন',
       heroSecondaryCta: 'ইন্টারফেস ডেমো দেখুন',
       metricRecurring: 'টাস্ক প্রতি কমান্ডে',
       metricAlarms: 'রোলিং এক্স্যাক্ট অ্যালার্ম',
       metricZeroCostVal: 'ফ্রি',
-      metricZeroCost: 'BYOK ও প্রাইভেট ড্রাইভ',
+      metricZeroCost: 'অফলাইন প্রিসেট ও ফ্রি AI',
       exploreKicker: 'ইন্টারেক্টিভ ইন্টারফেস ট্যুর',
       exploreTitle: 'অ্যাপটি চালানোর মতোই প্রতিটি স্ক্রিন ঘুরে দেখুন',
       exploreDesc:
@@ -104,24 +104,24 @@
       whyTitle: 'H-TODO AI কেন অন্যদের চেয়ে আলাদা',
       whyDesc:
         'পরীক্ষা মিস হওয়া, হাতে সময়সূচি টাইপ করার ঝামেলা, ফ্রি AI টোকেন টাইমআউট এবং ডেটা প্রাইভেসির ভয় দূর করতে তৈরি।',
-      why1Title: '১ সেকেন্ডে রিকারিং ও বাল্ক রুল ইঞ্জিন',
+      why1Title: '০-টোকেন অফলাইন প্রিসেট ও ৪০০-টাস্ক ইঞ্জিন',
       why1Body:
-        '৮০+ টাস্কের দীর্ঘ JSON-এ আটকে না গিয়ে AI একটি সংক্ষিপ্ত রুল পাঠায় আর অ্যাপ নিজেই ১ সেকেন্ডে ৪০০টি পর্যন্ত টাস্ক (৩৬৬ দিন) বানিয়ে দেয় — সাথে বাল্ক ডিলিট, রিসিডিউল ও ইনস্ট্যান্ট Undo।',
-      why2Title: 'বাংলা, ইংরেজি ও বাংলিশ সাপোর্ট',
+        '১ ক্লিকে অফলাইনে Today, Tomorrow, Overdue প্রশ্নোত্তর ও রুটিন টেমপ্লেট চালান বিনা টোকেনে, অথবা ১ সেকেন্ডে ৪০০টি রিকারিং টাস্ক বানান ইনস্ট্যান্ট Undo-সহ।',
+      why2Title: 'বহুভাষিক AI ও ২১+ কাস্টম টাস্ক টাইপ',
       why2Body:
-        'ক্লাসের নোটিশ পেস্ট করুন বা স্বাভাবিক ভাষায় লিখুন। কোর্স, তারিখ, নির্দিষ্ট সময় ও সিলেবাস চেকলিস্ট আলাদা করে নেয় এবং ডুপ্লিকেট নোটিশ বুদ্ধিমত্তার সাথে মার্জ করে।',
-      why3Title: 'সঠিক তারিখের ৯৯-অ্যালার্ম রোলিং ইঞ্জিন',
+        'বাংলা, ইংরেজি ও বাংলিশ নোটিশ থেকে চেকলিস্ট বানায়; আছে Mail, Travel, Bank, Institution-সহ ২১টি আইকন এবং নিজস্ব কাস্টম টাইপ তৈরির সুবিধা।',
+      why3Title: 'সঠিক অ্যালার্ম ও আজকের দিন-কেন্দ্রিক টাইমলাইন',
       why3Body:
-        'কাস্টম সময় থাকলে ডিফল্ট অ্যালার্ট বন্ধ থাকে যাতে ডাবল অ্যালার্ম না বাজে। অ্যান্ড্রয়েডের সীমা মেনে আসন্ন ৯৯টি এক্স্যাক্ট অ্যালার্ম আগে থেকে কিউ করে এবং অ্যাপ খুললেই আপনাআপনি আপডেট হয়।',
-      why4Title: 'জিরো-সার্ভার প্রাইভেট Google Drive সিঙ্ক',
+        'টাস্কে কাস্টম সময় থাকলে ডিফল্ট অ্যালার্ট বন্ধ থাকে যাতে ডাবল অ্যালার্ম না বাজে, আর All Scheduled খুললেই সরাসরি আজকের শিডিউল সামনে আসে।',
+      why4Title: 'নীরব ও ব্যক্তিগত Google Drive সিঙ্ক',
       why4Body:
-        'কোনো থার্ড-পার্টি সার্ভার নেই। সব ডেটা ফোনে এবং আপনার নিজের ব্যক্তিগত Google Drive appDataFolder-এ থাকে; সাথে ডিলিট টম্বস্টোন এবং অফলাইন JSON এক্সপোর্ট ও ইমপোর্ট সুবিধা।',
-      why5Title: '১০০% ফ্রি BYOK ও API Key Guidebook',
+        'অ্যাপে ঢুকলে কোনো বিরক্তিকর সাইন-ইন পপআপ বা বারবার ব্যাকআপ নোটিফিকেশন ছাড়াই আপনার Drive-এ নীরবে সেভ হয়; সাথে অফলাইন JSON এক্সপোর্ট/ইমপোর্ট।',
+      why5Title: 'ফ্রি BYOK ও অটো মডেল ফেইলওভার',
       why5Body:
-        'কোনো বিজ্ঞাপন বা মাসিক চার্জ নেই। অ্যাপের ভেতরের API Key Guidebook দেখে সহজেই ফ্রি Groq (Recommended Fast), Gemini, OpenRouter বা xAI Grok কী সেট করুন।',
-      why6Title: 'PIN + ফিঙ্গারপ্রিন্ট ও গ্লাস UI',
+        'Groq, Gemini, OpenRouter বা Grok-এর ফ্রি কী (একাধিক ব্যাকআপ কী-সহ) দিন — এক মডেলে লিমিট শেষ হলে স্বয়ংক্রিয়ভাবে পরের মডেল বা প্রোভাইডারে সুইচ করে।',
+      why6Title: 'PIN + ফিঙ্গারপ্রিন্ট ও অটো আপডেট',
       why6Body:
-        'অ্যাপ ও API কী সুরক্ষিত রাখতে ৪-ডিজিট PIN ও ফিঙ্গারপ্রিন্ট লক, সাথে স্মুথ Light ও Dark Glass থিম এবং বিল্ট-ইন GitHub আপডেট চেকার।',
+        'অ্যাপ ও API কী সুরক্ষিত রাখতে ৪-ডিজিট PIN ও ফিঙ্গারপ্রিন্ট লক, সাথে Light ও Dark Glass UI এবং নীরব GitHub আপডেট অ্যালার্ট।',
       downloadTitle: 'অ্যান্ড্রয়েডের জন্য H-TODO AI ডাউনলোড করুন',
       downloadDesc:
         'GitHub Releases থেকে সরাসরি সর্বশেষ ভেরিফায়েড APK ডাউনলোড করুন। অ্যাপের Profile সেকশন থেকেই ভবিষ্যতের নতুন ভার্সন চেক ও আপডেট করা যায়।',
@@ -132,8 +132,8 @@
       quickStepsHeading: '৩ ধাপে দ্রুত শুরু করুন',
       qs1Title: 'APK ইনস্টল করুন',
       qs1Body: 'ওপরের বাটন থেকে APK ডাউনলোড করে আপনার অ্যান্ড্রয়েড ফোনে ইনস্টল করুন।',
-      qs2Title: 'ফ্রি API কী দিন',
-      qs2Body: 'Profile -> Active AI খুলে ভেতরের Guidebook দেখে একটি ফ্রি Groq বা Gemini কী বসান।',
+      qs2Title: 'ঐচ্ছিক ফ্রি AI কী',
+      qs2Body: 'অফলাইন প্রিসেট সরাসরি চলে। বড় নোটিশের জন্য Profile-এ ফ্রি Groq বা Gemini কী বসান।',
       qs3Title: 'অটো-প্ল্যান ও সিঙ্ক',
       qs3Body: 'বাংলা বা ইংরেজি নোটিশ ও রিকারিং রুটিন লিখুন, আর চাইলে Google Drive ব্যাকআপ চালু রাখুন।',
       devKicker: 'ডেভেলপার ও নির্মাতা',
@@ -198,10 +198,10 @@
         side: 'right',
         anchor: 'pl-view-mode',
         where: { en: 'Layout Switcher', bn: 'ভিউ সুইচার' },
-        title: { en: 'Week Grid & Full Timeline View', bn: 'উইক গ্রিড ও ফুল টাইমলাইন' },
+        title: { en: 'Week Grid & Today-First Timeline', bn: 'উইক গ্রিড ও Today-প্রথম টাইমলাইন' },
         body: {
-          en: 'Switch seamlessly between day-by-day grid browsing and a lazy-loaded chronological timeline handling 400+ tasks smoothly.',
-          bn: 'সপ্তাহভিত্তিক গ্রিড ভিউ অথবা ৪০০+ টাস্কের জন্য দ্রুতগতির লেজি-লোডেড ফুল টাইমলাইন ভিউতে সহজেই পরিবর্তন করুন।'
+          en: 'All Scheduled opens straight at Today (scroll up for past, down for upcoming) with a 1-tap Today jump button.',
+          bn: 'All Scheduled খুললেই সরাসরি Today সামনে আসে (ওপরে অতীত, নিচে আগামী), সাথে ১-ট্যাপ Today বাটন।'
         }
       },
       {
@@ -220,10 +220,10 @@
         side: 'right',
         anchor: 'pl-shortcuts',
         where: { en: 'Quick Actions', bn: 'কুইক অ্যাকশন' },
-        title: { en: '1-Tap AI Auto-Plan & Add', bn: 'AI Auto-Plan ও +Add শর্টকাট' },
+        title: { en: 'AI Auto-Plan & 21+ Custom Types', bn: 'AI Auto-Plan ও ২১+ কাস্টম টাইপ' },
         body: {
-          en: 'Jump straight into natural-language AI scheduling or add a manual task with custom date and exact alarm time.',
-          bn: 'সরাসরি AI চ্যাটে গিয়ে রুটিন বানান অথবা ম্যানুয়ালি নির্দিষ্ট তারিখ ও কাস্টম সময় দিয়ে নতুন টাস্ক যোগ করুন।'
+          en: '+ Add offers 21 built-in icons (Mail, Travel, Bank, Institution & more) plus your own custom task categories.',
+          bn: '+ Add থেকে Mail, Travel, Bank, Institution-সহ ২১টি আইকন কিংবা নিজের কাস্টম ক্যাটাগরি তৈরি করা যায়।'
         }
       },
       {
@@ -245,10 +245,10 @@
         side: 'right',
         anchor: 'ai-provider',
         where: { en: 'Provider Pill', bn: 'AI প্রোভাইডার পিল' },
-        title: { en: 'Groq Recommended Fast Engine', bn: 'Groq ফাস্ট ও ফ্রি ইঞ্জিন' },
+        title: { en: 'Multi-Model & Key Auto-Failover', bn: 'মাল্টি-মডেল ও কী অটো-ফেইলওভার' },
         body: {
-          en: 'Shows your active BYOK provider (Groq, Gemini, OpenRouter, Grok) with automatic model fallback and one-tap switching.',
-          bn: 'বর্তমান ফ্রি BYOK প্রোভাইডার ও অটো মডেল ফলব্যাক স্ট্যাটাস দেখায়; ট্যাপ করেই প্রোভাইডার বা কী পরিবর্তন করা যায়।'
+          en: 'Supports backup API keys and rotates models or providers automatically if rate limits or incomplete JSON hit.',
+          bn: 'একাধিক ব্যাকআপ কী সমর্থন করে; লিমিট শেষ হলে স্বয়ংক্রিয়ভাবে পরের মডেল বা প্রোভাইডারে সুইচ করে।'
         }
       },
       {
@@ -277,11 +277,11 @@
         id: 'ai-input',
         side: 'right',
         anchor: 'ai-input',
-        where: { en: 'Chat Composer', bn: 'মেসেজ বক্স' },
-        title: { en: 'English, Bengali & Banglish Input', bn: 'বাংলা, ইংরেজি ও বাংলিশ কমান্ড' },
+        where: { en: 'Presets & Chat', bn: 'প্রিসেট ও মেসেজ বক্স' },
+        title: { en: '0-Token Presets & Any Language', bn: '০-টোকেন প্রিসেট ও বহুভাষিক কমান্ড' },
         body: {
-          en: 'Paste notices or type bulk reschedule/delete commands in any language. Try tapping the demo prompt chips inside the phone!',
-          bn: 'যেকোনো ভাষায় নোটিশ পেস্ট করুন বা রিসিডিউল/ডিলিট বলুন। ওপরের ডেমো চিপগুলোতে ক্লিক করে এখনই পরীক্ষা করে দেখুন!'
+          en: 'Instant Today/Overdue presets run offline with 0 tokens; long notices go straight to Cloud AI. Try the demo chips!',
+          bn: 'Today/Overdue প্রিসেট অফলাইনে ০ টোকেনে চলে; বড় নোটিশ সরাসরি Cloud AI-তে যায়। নিচের ডেমো চিপগুলো চাপুন!'
         }
       }
     ],
@@ -292,10 +292,10 @@
         side: 'left',
         anchor: 'pr-drive',
         where: { en: 'Cloud & Offline Sync', bn: 'ড্রাইভ ও অফলাইন সিঙ্ক' },
-        title: { en: 'Private Google Drive & JSON', bn: 'প্রাইভেট Drive ও JSON ব্যাকআপ' },
+        title: { en: 'Quiet Private Drive & JSON', bn: 'নীরব প্রাইভেট Drive ও JSON' },
         body: {
-          en: 'Auto-backs up to your personal Drive appDataFolder with offline delete tombstones, plus portable JSON Export/Import.',
-          bn: 'আপনার নিজস্ব Google Drive appDataFolder-এ অটো ব্যাকআপ হয় (ডিলিট টম্বস্টোন সহ), সাথে অফলাইন JSON এক্সপোর্ট ও ইমপোর্ট।'
+          en: 'Syncs silently in the background to your personal Drive without recurring sign-in prompts or popups, plus JSON Export/Import.',
+          bn: 'বারবার সাইন-ইন পপআপ বা ব্যাকআপ নোটিফিকেশন ছাড়াই আপনার Drive-এ নীরবে সিঙ্ক হয়; সাথে JSON এক্সপোর্ট/ইমপোর্ট।'
         }
       },
       {
@@ -339,6 +339,7 @@
     lang: 'en',
     theme: 'dark',
     tab: 0,
+    latestTag: null,
     activeCalloutId: CALLOUTS[0][0].id,
     selectedDayIdx: 2,
     overviewFilter: 'all',
@@ -458,6 +459,10 @@
         el.textContent = dict[key];
       }
     });
+    if (state.latestTag) {
+      const tagEl = document.getElementById('release-tag-pill');
+      if (tagEl) tagEl.textContent = state.latestTag;
+    }
   }
 
   function setLanguage(lang) {
@@ -872,6 +877,7 @@
         </div>
         <div style="display:flex;gap:5px;" data-anchor="pl-shortcuts">
           ${pinBadge('pl-shortcuts')}
+          ${state.planMode === 'timeline' ? '<button type="button" class="shortcut-pill" id="plan-jump-today">Today</button>' : ''}
           <button type="button" class="shortcut-pill" data-jump-tab="2">AI Plan</button>
           <button type="button" class="shortcut-pill" id="plan-quick-add">+ Add</button>
         </div>
@@ -974,6 +980,7 @@
       <div data-anchor="ai-input">
         ${pinBadge('ai-input')}
         <div class="ai-prompt-chips">
+          <button type="button" class="prompt-chip" data-demo-cmd="qa_today">Today (0 Tokens)</button>
           <button type="button" class="prompt-chip" data-demo-cmd="recurring">Next 40d: 8 AM &amp; 9 PM Daily</button>
           <button type="button" class="prompt-chip" data-demo-cmd="bengali">কাল ১০টায় CSE কুইজ</button>
           <button type="button" class="prompt-chip" data-demo-cmd="bulk_delete">Bulk Delete &amp; Undo</button>
@@ -999,7 +1006,7 @@
           <img src="assets/Naimur_Hamim.jpg" alt="Profile" width="42" height="42" style="border-radius:12px;object-fit:cover;" />
           <div>
             <strong>Google Drive Sync Active</strong>
-            <span>Private appDataFolder + Offline JSON Backup</span>
+            <span>Quiet background sync + Offline JSON Backup</span>
           </div>
         </div>
         <div style="display:flex;gap:6px;margin-top:9px;">
@@ -1014,7 +1021,7 @@
           <strong>Active AI: Groq (Recommended)</strong>
           <span class="version-pill">Free BYOK</span>
         </div>
-        <p class="setting-sub">Built-in API Key Guidebook + live model discovery for Groq, Gemini, OpenRouter &amp; Grok.</p>
+        <p class="setting-sub">Free BYOK + backup keys &amp; auto-failover across Groq, Gemini, OpenRouter &amp; Grok.</p>
       </div>
 
       <div class="app-card app-card-elevated" data-anchor="pr-reminders">
@@ -1042,7 +1049,25 @@
   }
 
   function runAiCommand(kind, rawText) {
-    if (kind === 'recurring') {
+    if (kind === 'qa_today') {
+      const todayPending = state.tasks.filter((t) => t.dayIdx === 2 && !t.done);
+      state.chatHistory.push({
+        sender: 'user',
+        textEn: 'What is due today?',
+        textBn: 'আজ কী কী কাজ বাকি?'
+      });
+      state.chatHistory.push({
+        sender: 'ai',
+        textEn: `Local • Instant (0 tokens): ${todayPending.length} pending task(s) due today.`,
+        textBn: `Local • Instant (০ টোকেন): আজ মোট ${todayPending.length}টি কাজ বাকি আছে।`,
+        batch: {
+          items: (todayPending.length ? todayPending : state.tasks.slice(0, 2))
+            .slice(0, 3)
+            .map((t) => ({ title: t.title, time: t.time })),
+          moreCount: Math.max(0, todayPending.length - 3)
+        }
+      });
+    } else if (kind === 'recurring') {
       state.snapshotBeforeAi = JSON.parse(JSON.stringify(state.tasks));
       state.chatHistory.push({
         sender: 'user',
@@ -1264,24 +1289,32 @@
       });
     });
 
+    const jumpToday = document.getElementById('plan-jump-today');
+    if (jumpToday) {
+      jumpToday.addEventListener('click', () => {
+        phoneViewport.scrollTo({ top: 0, behavior: 'smooth' });
+        showToast('Anchored at Today in All Scheduled', 'All Scheduled আজকের দিনে অ্যাঙ্কর করা আছে');
+      });
+    }
+
     const quickAdd = document.getElementById('plan-quick-add');
     if (quickAdd) {
       quickAdd.addEventListener('click', () => {
         state.tasks.unshift({
           id: 't_man_' + Date.now(),
           dayIdx: state.selectedDayIdx,
-          dateLabel: 'Sat, Nov 22',
-          title: 'Lab Report Review Session',
-          type: 'assignment',
-          typeLabel: 'Manual',
+          dateLabel: 'Today, Nov 22',
+          title: 'Send Project Mail',
+          type: 'mail',
+          typeLabel: 'Mail',
           time: '06:00 PM',
           customTime: true,
           done: false,
-          syllabus: [{ text: 'Verify circuit diagrams', checked: false }]
+          syllabus: [{ text: 'Attach updated report PDF', checked: false }]
         });
         renderPhone();
         scheduleArrowUpdate();
-        showToast('Task added with custom 6:00 PM alarm', 'কাস্টম সন্ধ্যা ৬:০০ অ্যালার্মসহ টাস্ক যোগ হয়েছে');
+        showToast('Added Mail task (21+ types & custom icons)', 'Mail টাস্ক যোগ হয়েছে (২১+ টাইপ ও কাস্টম আইকন)');
       });
     }
 
@@ -1455,6 +1488,12 @@
       });
       if (!res.ok) return;
       const data = await res.json();
+
+      if (data.tag_name) {
+        state.latestTag = data.tag_name;
+        const tagEl = document.getElementById('release-tag-pill');
+        if (tagEl) tagEl.textContent = data.tag_name;
+      }
 
       const apkAsset = Array.isArray(data.assets)
         ? data.assets.find((a) => a.name && a.name.toLowerCase().endsWith('.apk'))
