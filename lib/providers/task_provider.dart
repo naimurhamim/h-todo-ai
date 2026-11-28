@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/ai_chat_action.dart';
+import '../models/custom_task_type.dart';
 import '../models/reminder_settings.dart';
 import '../models/task_item.dart';
 import '../services/notification_service.dart';
@@ -97,6 +98,7 @@ class TaskProvider extends ChangeNotifier {
   final ReminderSettings Function() _readReminderSettings;
 
   List<TaskItem> _tasks = [];
+  List<CustomTaskType> _customTaskTypes = [];
   TaskFilter _filter = TaskFilter.all;
   String _searchQuery = '';
   bool _loaded = false;
@@ -107,6 +109,8 @@ class TaskProvider extends ChangeNotifier {
   }
 
   List<TaskItem> get tasks => List.unmodifiable(_tasks);
+  List<CustomTaskType> get customTaskTypes =>
+      List.unmodifiable(_customTaskTypes);
   TaskFilter get filter => _filter;
   String get searchQuery => _searchQuery;
   bool get isLoaded => _loaded;
@@ -135,10 +139,67 @@ class TaskProvider extends ChangeNotifier {
 
   Future<void> load() async {
     _tasks = await _storage.loadTasks();
+    _customTaskTypes = await _storage.loadCustomTaskTypes();
     _loaded = true;
     final settings = await _storage.loadReminderSettings();
     await _notifications.rescheduleAll(_tasks, settings);
     notifyListeners();
+  }
+
+  Future<CustomTaskType?> addCustomTaskType({
+    required String name,
+    required String iconKey,
+  }) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return null;
+    final norm = trimmed.toLowerCase();
+    for (final existing in _customTaskTypes) {
+      if (existing.name.trim().toLowerCase() == norm) {
+        return existing;
+      }
+    }
+    final created = CustomTaskType(
+      id: const Uuid().v4(),
+      name: trimmed,
+      iconKey: iconKey,
+    );
+    _customTaskTypes = [..._customTaskTypes, created];
+    await _storage.saveCustomTaskTypes(_customTaskTypes);
+    notifyListeners();
+    _onDataChanged?.call();
+    return created;
+  }
+
+  Future<void> updateCustomTaskType(CustomTaskType updated) async {
+    final idx = _customTaskTypes.indexWhere((c) => c.id == updated.id);
+    if (idx == -1) return;
+    _customTaskTypes[idx] = updated;
+    await _storage.saveCustomTaskTypes(_customTaskTypes);
+
+    var tasksChanged = false;
+    _tasks = _tasks.map((task) {
+      if (task.customTypeId != updated.id) return task;
+      tasksChanged = true;
+      return task.copyWith(
+        customTypeLabel: updated.name,
+        customTypeIconKey: updated.iconKey,
+      );
+    }).toList();
+    if (tasksChanged) {
+      await _storage.saveTasks(_tasks);
+    }
+
+    notifyListeners();
+    _onDataChanged?.call();
+  }
+
+  Future<void> deleteCustomTaskType(String id) async {
+    final before = _customTaskTypes.length;
+    _customTaskTypes = _customTaskTypes.where((c) => c.id != id).toList();
+    if (_customTaskTypes.length == before) return;
+    await _storage.saveCustomTaskTypes(_customTaskTypes);
+    notifyListeners();
+    _onDataChanged?.call();
   }
 
   void setFilter(TaskFilter next) {
@@ -860,12 +921,18 @@ class TaskProvider extends ChangeNotifier {
     _onDataChanged?.call();
   }
 
-  /// Replaces local tasks from a cloud restore without triggering re-upload.
+  /// Replaces local tasks (and custom types when provided) from a cloud restore
+  /// without triggering re-upload.
   Future<void> applyRestoredState(
     List<TaskItem> restoredTasks,
-    ReminderSettings settings,
-  ) async {
+    ReminderSettings settings, {
+    List<CustomTaskType>? customTaskTypes,
+  }) async {
     _tasks = List<TaskItem>.from(restoredTasks);
+    if (customTaskTypes != null) {
+      _customTaskTypes = List<CustomTaskType>.from(customTaskTypes);
+      await _storage.saveCustomTaskTypes(_customTaskTypes);
+    }
     _loaded = true;
     await _storage.saveTasks(_tasks);
     await _notifications.rescheduleAll(_tasks, settings, force: true);

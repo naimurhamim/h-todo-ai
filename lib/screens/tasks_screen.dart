@@ -31,6 +31,8 @@ class _TasksScreenState extends State<TasksScreen> {
   late DateTime _selectedDay;
   late final DateTime _anchorSunday;
   late PageController _weekPageController;
+  final ScrollController _timelineScrollCtrl = ScrollController();
+  final GlobalKey _todayAnchorKey = GlobalKey();
   bool _timelineMode = false;
   bool _showCompletedOnly = false;
 
@@ -46,7 +48,25 @@ class _TasksScreenState extends State<TasksScreen> {
   @override
   void dispose() {
     _weekPageController.dispose();
+    _timelineScrollCtrl.dispose();
     super.dispose();
+  }
+
+  void _jumpToToday() {
+    if (!_timelineScrollCtrl.hasClients) return;
+    _timelineScrollCtrl.animateTo(
+      0,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  void _resetTimelineOffsetNextFrame() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _timelineScrollCtrl.hasClients) {
+        _timelineScrollCtrl.jumpTo(0);
+      }
+    });
   }
 
   DateTime _normalize(DateTime d) => DateTime(d.year, d.month, d.day);
@@ -119,14 +139,352 @@ class _TasksScreenState extends State<TasksScreen> {
     final timelineEntries = groupedTimeline.entries.toList()
       ..sort((a, b) => a.key.compareTo(b.key));
 
-    final timelineRows = <_TimelineRow>[];
-    if (_timelineMode) {
-      for (final entry in timelineEntries) {
-        timelineRows.add(_TimelineRow.header(entry.key));
+    final pastRowsReversed = <_TimelineRow>[];
+    final fromTodayRows = <_TimelineRow>[];
+    if (_timelineMode && timelineEntries.isNotEmpty) {
+      final pastEntries =
+          timelineEntries.where((e) => e.key.isBefore(today)).toList();
+      final fromTodayEntries =
+          timelineEntries.where((e) => !e.key.isBefore(today)).toList();
+
+      // If every scheduled item is in the past, anchor the latest past date at 0.0
+      // so All Scheduled never opens on an empty viewport.
+      if (fromTodayEntries.isEmpty && pastEntries.isNotEmpty) {
+        fromTodayEntries.add(pastEntries.removeLast());
+      }
+
+      final pastRowsChrono = <_TimelineRow>[];
+      for (var i = 0; i < pastEntries.length; i++) {
+        final entry = pastEntries[i];
+        pastRowsChrono.add(_TimelineRow.header(entry.key, isFirst: i == 0));
         for (final t in entry.value) {
-          timelineRows.add(_TimelineRow.task(t));
+          pastRowsChrono.add(_TimelineRow.task(t));
         }
       }
+      pastRowsReversed.addAll(pastRowsChrono.reversed);
+
+      final showTodayGapAnchor = pastEntries.isNotEmpty &&
+          fromTodayEntries.isNotEmpty &&
+          fromTodayEntries.first.key.isAfter(today);
+      if (showTodayGapAnchor) {
+        fromTodayRows.add(_TimelineRow.emptyTodayAnchor(today));
+      }
+      for (var i = 0; i < fromTodayEntries.length; i++) {
+        final entry = fromTodayEntries[i];
+        fromTodayRows.add(
+          _TimelineRow.header(
+            entry.key,
+            isFirst: i == 0 && !showTodayGapAnchor,
+          ),
+        );
+        for (final t in entry.value) {
+          fromTodayRows.add(_TimelineRow.task(t));
+        }
+      }
+    }
+
+    Widget buildHeaderControls({required bool pinned}) {
+      return Padding(
+        padding: EdgeInsets.fromLTRB(
+          AppSpacing.lg,
+          AppSpacing.sm,
+          AppSpacing.lg,
+          pinned ? AppSpacing.sm : AppSpacing.md,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Plan Your Day',
+                    style: textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                GlassContainer(
+                  borderRadius: AppRadius.pill,
+                  blur: 0,
+                  elevated: true,
+                  padding: const EdgeInsets.all(4),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _ViewToggleIcon(
+                        icon: Icons.calendar_today_outlined,
+                        tooltip: 'Week Grid View',
+                        selected: !_timelineMode,
+                        onTap: () {
+                          if (!_timelineMode) return;
+                          final targetPage = _pageForDate(_selectedDay);
+                          _weekPageController.dispose();
+                          _weekPageController = PageController(
+                            initialPage: targetPage,
+                          );
+                          setState(() => _timelineMode = false);
+                        },
+                      ),
+                      _ViewToggleIcon(
+                        icon: Icons.view_agenda_outlined,
+                        tooltip: 'Full Timeline View',
+                        selected: _timelineMode,
+                        onTap: () {
+                          if (_timelineMode) return;
+                          setState(() => _timelineMode = true);
+                          _resetTimelineOffsetNextFrame();
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.md),
+            Row(
+              children: [
+                Expanded(
+                  child: GlassContainer(
+                    borderRadius: AppRadius.pill,
+                    blur: 0,
+                    padding: const EdgeInsets.all(4),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: _SegmentItem(
+                            label: 'All Tasks',
+                            selected: !_showCompletedOnly,
+                            onTap: () {
+                              setState(() => _showCompletedOnly = false);
+                              if (_timelineMode) _resetTimelineOffsetNextFrame();
+                            },
+                          ),
+                        ),
+                        Expanded(
+                          child: _SegmentItem(
+                            label: 'Completed',
+                            selected: _showCompletedOnly,
+                            onTap: () {
+                              setState(() => _showCompletedOnly = true);
+                              if (_timelineMode) _resetTimelineOffsetNextFrame();
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                GlassPillButton(
+                  icon: Icons.auto_awesome_rounded,
+                  iconColor: colors.primary,
+                  label: 'Auto-Plan',
+                  selected: true,
+                  onTap: widget.onGoToAiChat,
+                ),
+              ],
+            ),
+            if (!_timelineMode) ...[
+              const SizedBox(height: AppSpacing.lg),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      DateFormat('d MMMM, yyyy').format(_selectedDay),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  GlassCircleButton(
+                    icon: Icons.chevron_left_rounded,
+                    tooltip: 'Previous week',
+                    size: 38,
+                    onTap: () => _stepWeek(-1),
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  GlassCircleButton(
+                    icon: Icons.chevron_right_rounded,
+                    tooltip: 'Next week',
+                    size: 38,
+                    onTap: () => _stepWeek(1),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.md),
+              SizedBox(
+                height: 142,
+                child: PageView.builder(
+                  controller: _weekPageController,
+                  onPageChanged: (page) {
+                    final days = _weekDaysForPage(page);
+                    final slot = _selectedDay.weekday % 7;
+                    final nextSelected = days[slot];
+                    if (nextSelected != _selectedDay) {
+                      setState(() => _selectedDay = nextSelected);
+                    }
+                  },
+                  itemBuilder: (context, page) {
+                    final pageWeekDays = _weekDaysForPage(page);
+                    return Row(
+                      children: pageWeekDays.map((day) {
+                        final selected = day == _selectedDay;
+                        final isToday = day == today;
+                        final dayItems = statusFiltered
+                            .where((t) => _normalize(t.dueDate) == day)
+                            .toList();
+
+                        return Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 2,
+                            ),
+                            child: GlassContainer(
+                              borderRadius: AppRadius.md,
+                              blur: 0,
+                              elevated: selected,
+                              borderColor: selected
+                                  ? colors.primary
+                                  : (isToday
+                                      ? colors.textSecondary
+                                      : colors.glassBorder),
+                              onTap: () => setState(() => _selectedDay = day),
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 10,
+                                horizontal: 4,
+                              ),
+                              child: SizedBox(
+                                height: 118,
+                                child: Column(
+                                  children: [
+                                    Text(
+                                      '${day.day}',
+                                      style: textTheme.titleSmall?.copyWith(
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    Text(
+                                      DateFormat('E')
+                                          .format(day)
+                                          .substring(0, 2),
+                                      style: textTheme.labelSmall,
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Expanded(
+                                      child: dayItems.isEmpty
+                                          ? const SizedBox.shrink()
+                                          : Wrap(
+                                              alignment: WrapAlignment.center,
+                                              spacing: 2,
+                                              runSpacing: 4,
+                                              children: dayItems
+                                                  .take(4)
+                                                  .map(
+                                                    (item) => Icon(
+                                                      taskIconForItem(
+                                                        item,
+                                                        taskProvider
+                                                            .customTaskTypes,
+                                                      ),
+                                                      size: 13,
+                                                      color: item.isCompleted
+                                                          ? colors.textSecondary
+                                                          : colors.textPrimary,
+                                                    ),
+                                                  )
+                                                  .toList(),
+                                            ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    );
+                  },
+                ),
+              ),
+            ],
+            SizedBox(height: _timelineMode ? AppSpacing.lg : AppSpacing.xl),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _timelineMode ? 'All Scheduled' : 'Agenda',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                if (_timelineMode && timelineEntries.isNotEmpty) ...[
+                  GlassPillButton(
+                    icon: Icons.today_rounded,
+                    iconColor: colors.primary,
+                    label: 'Today',
+                    onTap: _jumpToToday,
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                ],
+                GlassPillButton(
+                  icon: Icons.add_rounded,
+                  label: 'Add',
+                  onTap: () => TaskEditorSheet.show(
+                    context,
+                    initialDate: _selectedDay,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget buildTimelineRow(_TimelineRow row) {
+      if (row.headerDate != null) {
+        final d = row.headerDate!;
+        final label = row.isEmptyAnchor
+            ? 'Today • ${DateFormat('d MMM yyyy').format(d)} • Nothing scheduled'
+            : (d == today
+                ? 'Today • ${DateFormat('d MMM yyyy').format(d)}'
+                : DateFormat('EEE, d MMM yyyy').format(d));
+        return Padding(
+          padding: EdgeInsets.only(
+            top: row.isFirst ? AppSpacing.xs : AppSpacing.lg,
+            bottom: AppSpacing.sm,
+          ),
+          child: Text(
+            label,
+            style: textTheme.labelLarge?.copyWith(
+              color: (d == today && !row.isEmptyAnchor)
+                  ? colors.primary
+                  : colors.textSecondary,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        );
+      }
+      final item = row.task!;
+      return Padding(
+        padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+        child: TaskCard(
+          task: item,
+          onToggleComplete: () => taskProvider.toggleTaskComplete(item.id),
+          onToggleSubtask: (subId) =>
+              taskProvider.toggleSubtaskComplete(item.id, subId),
+          onDelete: () => taskProvider.deleteTask(item.id),
+          onTap: () => TaskDetailSheet.show(context, item.id),
+        ),
+      );
     }
 
     return SafeArea(
@@ -134,339 +492,95 @@ class _TasksScreenState extends State<TasksScreen> {
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: AppLayout.maxContentWidth),
-          child: CustomScrollView(
-            cacheExtent: 500,
-            slivers: [
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.lg,
-                  AppSpacing.sm,
-                  AppSpacing.lg,
-                  AppSpacing.md,
-                ),
-                sliver: SliverToBoxAdapter(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              'Plan Your Day',
-                              style: textTheme.headlineSmall?.copyWith(
-                                fontWeight: FontWeight.w700,
+          child: _timelineMode
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    buildHeaderControls(pinned: true),
+                    Expanded(
+                      child: timelineEntries.isEmpty
+                          ? SingleChildScrollView(
+                              padding: EdgeInsets.fromLTRB(
+                                AppSpacing.lg,
+                                0,
+                                AppSpacing.lg,
+                                wide ? AppSpacing.xl : AppLayout.navClearance,
                               ),
-                            ),
-                          ),
-                          GlassContainer(
-                            borderRadius: AppRadius.pill,
-                            blur: 0,
-                            elevated: true,
-                            padding: const EdgeInsets.all(4),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                _ViewToggleIcon(
-                                  icon: Icons.calendar_today_outlined,
-                                  tooltip: 'Week Grid View',
-                                  selected: !_timelineMode,
-                                  onTap: () {
-                                    if (!_timelineMode) return;
-                                    final targetPage = _pageForDate(_selectedDay);
-                                    _weekPageController.dispose();
-                                    _weekPageController = PageController(
-                                      initialPage: targetPage,
-                                    );
-                                    setState(() => _timelineMode = false);
-                                  },
-                                ),
-                                _ViewToggleIcon(
-                                  icon: Icons.view_agenda_outlined,
-                                  tooltip: 'Full Timeline View',
-                                  selected: _timelineMode,
-                                  onTap: () =>
-                                      setState(() => _timelineMode = true),
+                              child: _EmptyAgendaCard(
+                                onGoToAiChat: widget.onGoToAiChat,
+                                onAddManual: () =>
+                                    TaskEditorSheet.show(context),
+                              ),
+                            )
+                          : CustomScrollView(
+                              controller: _timelineScrollCtrl,
+                              center: _todayAnchorKey,
+                              cacheExtent: 500,
+                              slivers: [
+                                if (pastRowsReversed.isNotEmpty)
+                                  SliverPadding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: AppSpacing.lg,
+                                    ),
+                                    sliver: SliverList.builder(
+                                      itemCount: pastRowsReversed.length,
+                                      itemBuilder: (context, index) =>
+                                          buildTimelineRow(
+                                        pastRowsReversed[index],
+                                      ),
+                                    ),
+                                  ),
+                                SliverPadding(
+                                  key: _todayAnchorKey,
+                                  padding: EdgeInsets.fromLTRB(
+                                    AppSpacing.lg,
+                                    0,
+                                    AppSpacing.lg,
+                                    wide
+                                        ? AppSpacing.xl
+                                        : AppLayout.navClearance,
+                                  ),
+                                  sliver: SliverList.builder(
+                                    itemCount: fromTodayRows.length,
+                                    itemBuilder: (context, index) =>
+                                        buildTimelineRow(fromTodayRows[index]),
+                                  ),
                                 ),
                               ],
                             ),
-                          ),
-                        ],
+                    ),
+                  ],
+                )
+              : CustomScrollView(
+                  cacheExtent: 500,
+                  slivers: [
+                    SliverToBoxAdapter(
+                      child: buildHeaderControls(pinned: false),
+                    ),
+                    SliverPadding(
+                      padding: EdgeInsets.fromLTRB(
+                        AppSpacing.lg,
+                        0,
+                        AppSpacing.lg,
+                        wide ? AppSpacing.xl : AppLayout.navClearance,
                       ),
-                      const SizedBox(height: AppSpacing.md),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: GlassContainer(
-                              borderRadius: AppRadius.pill,
-                              blur: 0,
-                              padding: const EdgeInsets.all(4),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: _SegmentItem(
-                                      label: 'All Tasks',
-                                      selected: !_showCompletedOnly,
-                                      onTap: () => setState(
-                                        () => _showCompletedOnly = false,
-                                      ),
-                                    ),
-                                  ),
-                                  Expanded(
-                                    child: _SegmentItem(
-                                      label: 'Completed',
-                                      selected: _showCompletedOnly,
-                                      onTap: () => setState(
-                                        () => _showCompletedOnly = true,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: AppSpacing.sm),
-                          GlassPillButton(
-                            icon: Icons.auto_awesome_rounded,
-                            iconColor: colors.primary,
-                            label: 'Auto-Plan',
-                            selected: true,
-                            onTap: widget.onGoToAiChat,
-                          ),
-                        ],
-                      ),
-                      if (!_timelineMode) ...[
-                        const SizedBox(height: AppSpacing.lg),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                DateFormat('d MMMM, yyyy').format(_selectedDay),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.w700,
+                      sliver: selectedDayTasks.isEmpty
+                          ? SliverToBoxAdapter(
+                              child: _EmptyAgendaCard(
+                                onGoToAiChat: widget.onGoToAiChat,
+                                onAddManual: () => TaskEditorSheet.show(
+                                  context,
+                                  initialDate: _selectedDay,
                                 ),
                               ),
-                            ),
-                            const SizedBox(width: AppSpacing.sm),
-                            GlassCircleButton(
-                              icon: Icons.chevron_left_rounded,
-                              tooltip: 'Previous week',
-                              size: 38,
-                              onTap: () => _stepWeek(-1),
-                            ),
-                            const SizedBox(width: AppSpacing.sm),
-                            GlassCircleButton(
-                              icon: Icons.chevron_right_rounded,
-                              tooltip: 'Next week',
-                              size: 38,
-                              onTap: () => _stepWeek(1),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: AppSpacing.md),
-                        SizedBox(
-                          height: 142,
-                          child: PageView.builder(
-                            controller: _weekPageController,
-                            onPageChanged: (page) {
-                              final days = _weekDaysForPage(page);
-                              final slot = _selectedDay.weekday % 7;
-                              final nextSelected = days[slot];
-                              if (nextSelected != _selectedDay) {
-                                setState(() => _selectedDay = nextSelected);
-                              }
-                            },
-                            itemBuilder: (context, page) {
-                              final pageWeekDays = _weekDaysForPage(page);
-                              return Row(
-                                children: pageWeekDays.map((day) {
-                                  final selected = day == _selectedDay;
-                                  final isToday = day == today;
-                                  final dayItems = statusFiltered
-                                      .where((t) => _normalize(t.dueDate) == day)
-                                      .toList();
-
-                                  return Expanded(
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 2,
-                                      ),
-                                      child: GlassContainer(
-                                        borderRadius: AppRadius.md,
-                                        blur: 0,
-                                        elevated: selected,
-                                        borderColor: selected
-                                            ? colors.primary
-                                            : (isToday
-                                                ? colors.textSecondary
-                                                : colors.glassBorder),
-                                        onTap: () =>
-                                            setState(() => _selectedDay = day),
-                                        padding: const EdgeInsets.symmetric(
-                                          vertical: 10,
-                                          horizontal: 4,
-                                        ),
-                                        child: SizedBox(
-                                          height: 118,
-                                          child: Column(
-                                            children: [
-                                              Text(
-                                                '${day.day}',
-                                                style: textTheme.titleSmall
-                                                    ?.copyWith(
-                                                  fontWeight: FontWeight.w700,
-                                                ),
-                                              ),
-                                              Text(
-                                                DateFormat('E')
-                                                    .format(day)
-                                                    .substring(0, 2),
-                                                style: textTheme.labelSmall,
-                                              ),
-                                              const SizedBox(height: 8),
-                                              Expanded(
-                                                child: dayItems.isEmpty
-                                                    ? const SizedBox.shrink()
-                                                    : Wrap(
-                                                        alignment:
-                                                            WrapAlignment
-                                                                .center,
-                                                        spacing: 2,
-                                                        runSpacing: 4,
-                                                        children: dayItems
-                                                            .take(4)
-                                                            .map(
-                                                              (item) => Icon(
-                                                                taskTypeIcon(
-                                                                  item.type,
-                                                                ),
-                                                                size: 13,
-                                                                color: item
-                                                                        .isCompleted
-                                                                    ? colors
-                                                                        .textSecondary
-                                                                    : colors
-                                                                        .textPrimary,
-                                                              ),
-                                                            )
-                                                            .toList(),
-                                                      ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  );
-                                }).toList(),
-                              );
-                            },
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: AppSpacing.xl),
-                      Row(
-                        children: [
-                          Text(
-                            _timelineMode ? 'All Scheduled' : 'Agenda',
-                            style: textTheme.titleLarge?.copyWith(
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const Spacer(),
-                          GlassPillButton(
-                            icon: Icons.add_rounded,
-                            label: 'Add',
-                            onTap: () => TaskEditorSheet.show(
-                              context,
-                              initialDate: _selectedDay,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              SliverPadding(
-                padding: EdgeInsets.fromLTRB(
-                  AppSpacing.lg,
-                  0,
-                  AppSpacing.lg,
-                  wide ? AppSpacing.xl : AppLayout.navClearance,
-                ),
-                sliver: !_timelineMode
-                    ? (selectedDayTasks.isEmpty
-                        ? SliverToBoxAdapter(
-                            child: _EmptyAgendaCard(
-                              onGoToAiChat: widget.onGoToAiChat,
-                              onAddManual: () => TaskEditorSheet.show(
-                                context,
-                                initialDate: _selectedDay,
-                              ),
-                            ),
-                          )
-                        : SliverList.separated(
-                            itemCount: selectedDayTasks.length,
-                            separatorBuilder: (_, _) =>
-                                const SizedBox(height: AppSpacing.sm),
-                            itemBuilder: (context, index) {
-                              final item = selectedDayTasks[index];
-                              return TaskCard(
-                                task: item,
-                                onToggleComplete: () =>
-                                    taskProvider.toggleTaskComplete(item.id),
-                                onToggleSubtask: (subId) =>
-                                    taskProvider.toggleSubtaskComplete(
-                                  item.id,
-                                  subId,
-                                ),
-                                onDelete: () =>
-                                    taskProvider.deleteTask(item.id),
-                                onTap: () =>
-                                    TaskDetailSheet.show(context, item.id),
-                              );
-                            },
-                          ))
-                    : (timelineRows.isEmpty
-                        ? SliverToBoxAdapter(
-                            child: _EmptyAgendaCard(
-                              onGoToAiChat: widget.onGoToAiChat,
-                              onAddManual: () => TaskEditorSheet.show(context),
-                            ),
-                          )
-                        : SliverList.builder(
-                            itemCount: timelineRows.length,
-                            itemBuilder: (context, index) {
-                              final row = timelineRows[index];
-                              if (row.headerDate != null) {
-                                final d = row.headerDate!;
-                                return Padding(
-                                  padding: EdgeInsets.only(
-                                    top: index == 0
-                                        ? AppSpacing.xs
-                                        : AppSpacing.lg,
-                                    bottom: AppSpacing.sm,
-                                  ),
-                                  child: Text(
-                                    d == today
-                                        ? 'Today • ${DateFormat('d MMM yyyy').format(d)}'
-                                        : DateFormat('EEE, d MMM yyyy')
-                                            .format(d),
-                                    style: textTheme.labelLarge?.copyWith(
-                                      color: colors.textSecondary,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                );
-                              }
-                              final item = row.task!;
-                              return Padding(
-                                padding: const EdgeInsets.only(
-                                  bottom: AppSpacing.sm,
-                                ),
-                                child: TaskCard(
+                            )
+                          : SliverList.separated(
+                              itemCount: selectedDayTasks.length,
+                              separatorBuilder: (_, _) =>
+                                  const SizedBox(height: AppSpacing.sm),
+                              itemBuilder: (context, index) {
+                                final item = selectedDayTasks[index];
+                                return TaskCard(
                                   task: item,
                                   onToggleComplete: () =>
                                       taskProvider.toggleTaskComplete(item.id),
@@ -479,13 +593,12 @@ class _TasksScreenState extends State<TasksScreen> {
                                       taskProvider.deleteTask(item.id),
                                   onTap: () =>
                                       TaskDetailSheet.show(context, item.id),
-                                ),
-                              );
-                            },
-                          )),
-              ),
-            ],
-          ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
         ),
       ),
     );
@@ -493,11 +606,24 @@ class _TasksScreenState extends State<TasksScreen> {
 }
 
 class _TimelineRow {
-  const _TimelineRow.header(this.headerDate) : task = null;
-  const _TimelineRow.task(this.task) : headerDate = null;
+  const _TimelineRow.header(this.headerDate, {this.isFirst = false})
+      : task = null,
+        isEmptyAnchor = false;
+
+  const _TimelineRow.emptyTodayAnchor(this.headerDate)
+      : task = null,
+        isFirst = true,
+        isEmptyAnchor = true;
+
+  const _TimelineRow.task(this.task)
+      : headerDate = null,
+        isFirst = false,
+        isEmptyAnchor = false;
 
   final DateTime? headerDate;
   final TaskItem? task;
+  final bool isFirst;
+  final bool isEmptyAnchor;
 }
 
 class _ViewToggleIcon extends StatelessWidget {

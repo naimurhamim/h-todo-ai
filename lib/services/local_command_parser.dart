@@ -910,23 +910,118 @@ abstract final class LocalCommandParser {
   static TaskType _inferType(String lowerTitle) {
     if (lowerTitle.contains('exam') ||
         lowerTitle.contains('mid') ||
-        lowerTitle.contains('final')) {
+        lowerTitle.contains('final') ||
+        lowerTitle.contains('পরীক্ষা')) {
       return TaskType.exam;
     }
     if (lowerTitle.contains('quiz') ||
         lowerTitle.contains('class test') ||
-        lowerTitle.contains('ct') ||
+        RegExp(r'\bct\b').hasMatch(lowerTitle) ||
         lowerTitle.contains('কুইজ')) {
       return TaskType.classTest;
     }
     if (lowerTitle.contains('assignment') ||
         lowerTitle.contains('report') ||
-        lowerTitle.contains('submission')) {
+        lowerTitle.contains('submission') ||
+        lowerTitle.contains('অ্যাসাইনমেন্ট')) {
       return TaskType.assignment;
     }
-    if (lowerTitle.contains('lab')) return TaskType.lab;
-    if (lowerTitle.contains('meeting') || lowerTitle.contains('call')) {
+    if (RegExp(r'\blab\b').hasMatch(lowerTitle) ||
+        lowerTitle.contains('sessional')) {
+      return TaskType.lab;
+    }
+    if (lowerTitle.contains('mail') ||
+        lowerTitle.contains('email') ||
+        lowerTitle.contains('মেইল')) {
+      return TaskType.mail;
+    }
+    if (lowerTitle.contains('travel') ||
+        lowerTitle.contains('trip') ||
+        lowerTitle.contains('flight') ||
+        lowerTitle.contains('tour') ||
+        lowerTitle.contains('ভ্রমণ') ||
+        lowerTitle.contains('ট্রিপ')) {
+      return TaskType.travel;
+    }
+    if (lowerTitle.contains('bank') || lowerTitle.contains('ব্যাংক')) {
+      return TaskType.bank;
+    }
+    if (lowerTitle.contains('institution') ||
+        lowerTitle.contains('university') ||
+        lowerTitle.contains('college') ||
+        lowerTitle.contains('office') ||
+        lowerTitle.contains('ভার্সিটি') ||
+        lowerTitle.contains('অফিস') ||
+        lowerTitle.contains('প্রতিষ্ঠান')) {
+      return TaskType.institution;
+    }
+    if (lowerTitle.contains('meeting') || lowerTitle.contains('মিটিং')) {
       return TaskType.meeting;
+    }
+    if (RegExp(r'\bcall\b').hasMatch(lowerTitle) ||
+        lowerTitle.contains('phone') ||
+        lowerTitle.contains('ফোন') ||
+        lowerTitle.contains('কল')) {
+      return TaskType.call;
+    }
+    if (RegExp(r'\bbill\b').hasMatch(lowerTitle) ||
+        lowerTitle.contains('payment') ||
+        lowerTitle.contains('rent') ||
+        lowerTitle.contains('fee') ||
+        lowerTitle.contains('বিল')) {
+      return TaskType.bill;
+    }
+    if (lowerTitle.contains('shopping') ||
+        lowerTitle.contains('grocery') ||
+        lowerTitle.contains('market') ||
+        lowerTitle.contains('বাজার') ||
+        lowerTitle.contains('কেনাকাটা')) {
+      return TaskType.shopping;
+    }
+    if (lowerTitle.contains('health') ||
+        lowerTitle.contains('doctor') ||
+        lowerTitle.contains('medicine') ||
+        lowerTitle.contains('hospital') ||
+        lowerTitle.contains('ডাক্তার') ||
+        lowerTitle.contains('ওষুধ')) {
+      return TaskType.health;
+    }
+    if (lowerTitle.contains('fitness') ||
+        RegExp(r'\bgym\b').hasMatch(lowerTitle) ||
+        lowerTitle.contains('workout') ||
+        lowerTitle.contains('exercise') ||
+        lowerTitle.contains('ব্যায়াম')) {
+      return TaskType.fitness;
+    }
+    if (lowerTitle.contains('document') ||
+        lowerTitle.contains('passport') ||
+        lowerTitle.contains('visa') ||
+        lowerTitle.contains('paperwork') ||
+        lowerTitle.contains('কাগজপত্র')) {
+      return TaskType.document;
+    }
+    if (lowerTitle.contains('family') ||
+        lowerTitle.contains('parents') ||
+        lowerTitle.contains('পরিবার')) {
+      return TaskType.family;
+    }
+    if (lowerTitle.contains('event') ||
+        lowerTitle.contains('ceremony') ||
+        lowerTitle.contains('অনুষ্ঠান')) {
+      return TaskType.event;
+    }
+    if (lowerTitle.contains('study') ||
+        lowerTitle.contains('revision') ||
+        lowerTitle.contains('পড়া')) {
+      return TaskType.study;
+    }
+    if (lowerTitle.contains('work') ||
+        lowerTitle.contains('project') ||
+        lowerTitle.contains('প্রজেক্ট')) {
+      return TaskType.work;
+    }
+    if (lowerTitle.contains('personal') || lowerTitle.contains('ব্যক্তিগত')) {
+      return TaskType.personal;
     }
     return TaskType.task;
   }

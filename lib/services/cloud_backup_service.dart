@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:google_sign_in_platform_interface/google_sign_in_platform_interface.dart';
 
 import '../models/cloud_backup_payload.dart';
 import '../models/google_account_profile.dart';
@@ -31,6 +32,7 @@ class CloudBackupService {
 
   bool _googleInitialized = false;
   GoogleSignInAccount? _currentAccount;
+  GoogleAccountProfile? _authorizedProfile;
 
   bool get isAvailable {
     if (_forceDisabled || kIsWeb) return false;
@@ -38,12 +40,13 @@ class CloudBackupService {
         defaultTargetPlatform == TargetPlatform.iOS;
   }
 
-  bool get isSignedInSessionActive => _currentAccount != null;
+  bool get isSignedInSessionActive =>
+      _currentAccount != null || _authorizedProfile != null;
 
   GoogleAccountProfile? get currentProfile {
     final account = _currentAccount;
-    if (account == null) return null;
-    return _profileFromAccount(account);
+    if (account != null) return _profileFromAccount(account);
+    return _authorizedProfile;
   }
 
   static GoogleAccountProfile _profileFromAccount(GoogleSignInAccount account) {
@@ -98,25 +101,43 @@ class CloudBackupService {
       );
     }
 
+    final profile = _profileFromAccount(account);
     _currentAccount = account;
-    return _profileFromAccount(account);
+    _authorizedProfile = profile;
+    return profile;
   }
 
-  /// Attempts to silently restore a previously authenticated Google session
-  /// on app startup without displaying interactive UI.
-  Future<GoogleAccountProfile?> restoreSilentSession() async {
+  /// Silently checks Google Drive scope authorization for [cachedProfile] without
+  /// invoking Android Credential Manager UI (`attemptLightweightAuthentication()`),
+  /// preventing the recurring "Signing you in..." system prompt on every app launch.
+  Future<GoogleAccountProfile?> restoreSilentSession({
+    GoogleAccountProfile? cachedProfile,
+  }) async {
     if (!isAvailable) return null;
-    if (_currentAccount != null) {
-      return _profileFromAccount(_currentAccount!);
-    }
+    final active = currentProfile;
+    if (active != null) return active;
+
+    final email = cachedProfile?.email.trim() ?? '';
+    if (email.isEmpty) return null;
+
     try {
       await _ensureGoogleInitialized();
-      final attempt = GoogleSignIn.instance.attemptLightweightAuthentication();
-      if (attempt == null) return null;
-      final account = await attempt;
-      if (account == null) return null;
-      _currentAccount = account;
-      return _profileFromAccount(account);
+      final tokenData = await GoogleSignInPlatform.instance
+          .clientAuthorizationTokensForScopes(
+        ClientAuthorizationTokensForScopesParameters(
+          request: AuthorizationRequestDetails(
+            scopes: const [GoogleDriveBackupClient.appDataScope],
+            userId: cachedProfile?.id,
+            email: email,
+            promptIfUnauthorized: false,
+          ),
+        ),
+      );
+      if (tokenData == null || tokenData.accessToken.trim().isEmpty) {
+        return null;
+      }
+      _authorizedProfile = cachedProfile;
+      return cachedProfile;
     } catch (_) {
       return null;
     }
@@ -126,22 +147,48 @@ class CloudBackupService {
     required bool promptIfNecessary,
   }) async {
     final account = _currentAccount;
-    if (account == null) {
-      throw const DriveAuthExpiredException(
-        'Google session inactive. Tap Sign in / Reconnect to sync.',
+    if (account != null) {
+      final headers = await account.authorizationClient.authorizationHeaders(
+        const [GoogleDriveBackupClient.appDataScope],
+        promptIfNecessary: promptIfNecessary,
       );
+      if (headers == null || headers.isEmpty) {
+        throw const DriveAuthExpiredException(
+          'Google Drive permission missing. Tap Sign in / Reconnect.',
+        );
+      }
+      return headers;
     }
 
-    final headers = await account.authorizationClient.authorizationHeaders(
-      const [GoogleDriveBackupClient.appDataScope],
-      promptIfNecessary: promptIfNecessary,
-    );
-    if (headers == null || headers.isEmpty) {
+    final cached = _authorizedProfile;
+    if (cached != null && cached.email.trim().isNotEmpty) {
+      try {
+        final tokenData = await GoogleSignInPlatform.instance
+            .clientAuthorizationTokensForScopes(
+          ClientAuthorizationTokensForScopesParameters(
+            request: AuthorizationRequestDetails(
+              scopes: const [GoogleDriveBackupClient.appDataScope],
+              userId: cached.id,
+              email: cached.email,
+              promptIfUnauthorized: promptIfNecessary,
+            ),
+          ),
+        );
+        if (tokenData != null && tokenData.accessToken.trim().isNotEmpty) {
+          return <String, String>{
+            'Authorization': 'Bearer ${tokenData.accessToken}',
+            'X-Goog-AuthUser': '0',
+          };
+        }
+      } catch (_) {}
       throw const DriveAuthExpiredException(
         'Google Drive permission missing. Tap Sign in / Reconnect.',
       );
     }
-    return headers;
+
+    throw const DriveAuthExpiredException(
+      'Google session inactive. Tap Sign in / Reconnect to sync.',
+    );
   }
 
   Future<T> _withDriveAuth<T>(
@@ -154,16 +201,21 @@ class CloudBackupService {
     try {
       return await action(headers);
     } on DriveAuthExpiredException {
-      final account = _currentAccount;
-      if (account == null) rethrow;
+      if (!isSignedInSessionActive) rethrow;
       final bearer = headers['Authorization'] ?? '';
       if (bearer.startsWith('Bearer ')) {
         final expiredToken = bearer.substring(7).trim();
         if (expiredToken.isNotEmpty) {
           try {
-            await account.authorizationClient.clearAuthorizationToken(
-              accessToken: expiredToken,
-            );
+            if (_currentAccount != null) {
+              await _currentAccount!.authorizationClient.clearAuthorizationToken(
+                accessToken: expiredToken,
+              );
+            } else {
+              await GoogleSignInPlatform.instance.clearAuthorizationToken(
+                ClearAuthorizationTokenParams(accessToken: expiredToken),
+              );
+            }
           } catch (_) {}
         }
       }
@@ -248,6 +300,7 @@ class CloudBackupService {
 
   Future<void> signOut() async {
     _currentAccount = null;
+    _authorizedProfile = null;
     if (!isAvailable) return;
     try {
       await _ensureGoogleInitialized();

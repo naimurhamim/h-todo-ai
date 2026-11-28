@@ -7,6 +7,21 @@ enum TaskType {
   exam,
   lab,
   meeting,
+  mail,
+  travel,
+  bank,
+  institution,
+  call,
+  work,
+  study,
+  bill,
+  shopping,
+  health,
+  fitness,
+  event,
+  family,
+  document,
+  personal,
   task;
 
   String get label {
@@ -21,18 +36,48 @@ enum TaskType {
         return 'Lab';
       case TaskType.meeting:
         return 'Meeting';
+      case TaskType.mail:
+        return 'Mail';
+      case TaskType.travel:
+        return 'Travel';
+      case TaskType.bank:
+        return 'Bank';
+      case TaskType.institution:
+        return 'Institution';
+      case TaskType.call:
+        return 'Call';
+      case TaskType.work:
+        return 'Work';
+      case TaskType.study:
+        return 'Study';
+      case TaskType.bill:
+        return 'Bill';
+      case TaskType.shopping:
+        return 'Shopping';
+      case TaskType.health:
+        return 'Health';
+      case TaskType.fitness:
+        return 'Fitness';
+      case TaskType.event:
+        return 'Event';
+      case TaskType.family:
+        return 'Family';
+      case TaskType.document:
+        return 'Document';
+      case TaskType.personal:
+        return 'Personal';
       case TaskType.task:
         return 'Task';
     }
   }
 
   static TaskType fromString(String? raw) {
-    final normalized = (raw ?? '').trim().toLowerCase().replaceAll('_', '');
+    final normalized =
+        (raw ?? '').trim().toLowerCase().replaceAll(RegExp(r'[\s_\-]+'), '');
     switch (normalized) {
       case 'assignment':
         return TaskType.assignment;
       case 'classtest':
-      case 'class test':
       case 'quiz':
       case 'ct':
         return TaskType.classTest;
@@ -45,6 +90,77 @@ enum TaskType {
         return TaskType.lab;
       case 'meeting':
         return TaskType.meeting;
+      case 'mail':
+      case 'email':
+        return TaskType.mail;
+      case 'travel':
+      case 'trip':
+      case 'flight':
+      case 'tour':
+        return TaskType.travel;
+      case 'bank':
+      case 'banking':
+      case 'finance':
+        return TaskType.bank;
+      case 'institution':
+      case 'university':
+      case 'college':
+      case 'school':
+      case 'office':
+      case 'govt':
+        return TaskType.institution;
+      case 'call':
+      case 'phone':
+        return TaskType.call;
+      case 'work':
+      case 'job':
+      case 'project':
+        return TaskType.work;
+      case 'study':
+      case 'revision':
+      case 'reading':
+        return TaskType.study;
+      case 'bill':
+      case 'bills':
+      case 'payment':
+      case 'rent':
+      case 'fee':
+        return TaskType.bill;
+      case 'shopping':
+      case 'shop':
+      case 'grocery':
+      case 'buy':
+      case 'market':
+        return TaskType.shopping;
+      case 'health':
+      case 'doctor':
+      case 'medicine':
+      case 'hospital':
+        return TaskType.health;
+      case 'fitness':
+      case 'gym':
+      case 'workout':
+      case 'exercise':
+        return TaskType.fitness;
+      case 'event':
+      case 'ceremony':
+      case 'program':
+        return TaskType.event;
+      case 'family':
+      case 'parents':
+      case 'home':
+        return TaskType.family;
+      case 'document':
+      case 'documents':
+      case 'docs':
+      case 'passport':
+      case 'visa':
+      case 'paperwork':
+      case 'form':
+        return TaskType.document;
+      case 'personal':
+      case 'self':
+        return TaskType.personal;
       default:
         return TaskType.task;
     }
@@ -129,6 +245,9 @@ class TaskItem {
     required this.createdAt,
     this.courseOrCategory = '',
     this.type = TaskType.task,
+    this.customTypeId,
+    this.customTypeLabel,
+    this.customTypeIconKey,
     this.priority = TaskPriority.medium,
     this.dueHour,
     this.dueMinute,
@@ -144,6 +263,9 @@ class TaskItem {
   final String title;
   final String courseOrCategory;
   final TaskType type;
+  final String? customTypeId;
+  final String? customTypeLabel;
+  final String? customTypeIconKey;
   final TaskPriority priority;
   final DateTime dueDate;
   final int? dueHour;
@@ -154,6 +276,12 @@ class TaskItem {
   final DateTime? completedAt;
   final DateTime createdAt;
   final String? seriesId;
+
+  String get displayTypeLabel {
+    final custom = customTypeLabel?.trim();
+    if (custom != null && custom.isNotEmpty) return custom;
+    return type.label;
+  }
 
   bool get hasDueTime => dueHour != null && dueMinute != null;
 
@@ -190,6 +318,10 @@ class TaskItem {
     String? title,
     String? courseOrCategory,
     TaskType? type,
+    String? customTypeId,
+    String? customTypeLabel,
+    String? customTypeIconKey,
+    bool clearCustomType = false,
     TaskPriority? priority,
     DateTime? dueDate,
     int? dueHour,
@@ -210,6 +342,13 @@ class TaskItem {
       title: title ?? this.title,
       courseOrCategory: courseOrCategory ?? this.courseOrCategory,
       type: type ?? this.type,
+      customTypeId:
+          clearCustomType ? null : (customTypeId ?? this.customTypeId),
+      customTypeLabel:
+          clearCustomType ? null : (customTypeLabel ?? this.customTypeLabel),
+      customTypeIconKey: clearCustomType
+          ? null
+          : (customTypeIconKey ?? this.customTypeIconKey),
       priority: priority ?? this.priority,
       dueDate: dueDate ?? this.dueDate,
       dueHour: clearDueTime ? null : (dueHour ?? this.dueHour),
@@ -230,6 +369,12 @@ class TaskItem {
         'title': title,
         'courseOrCategory': courseOrCategory,
         'type': type.name,
+        if (customTypeId != null && customTypeId!.trim().isNotEmpty)
+          'customTypeId': customTypeId!.trim(),
+        if (customTypeLabel != null && customTypeLabel!.trim().isNotEmpty)
+          'customTypeLabel': customTypeLabel!.trim(),
+        if (customTypeIconKey != null && customTypeIconKey!.trim().isNotEmpty)
+          'customTypeIconKey': customTypeIconKey!.trim(),
         'priority': priority.name,
         'dueDate': dateKey,
         'dueHour': dueHour,
@@ -247,6 +392,9 @@ class TaskItem {
         DateTime.now();
     final id = json['id']?.toString() ?? '';
     final rawSeries = json['seriesId']?.toString().trim();
+    final rawCustomId = json['customTypeId']?.toString().trim();
+    final rawCustomLabel = json['customTypeLabel']?.toString().trim();
+    final rawCustomIconKey = json['customTypeIconKey']?.toString().trim();
     return TaskItem(
       id: id,
       notificationBaseId: (json['notificationBaseId'] as int?) ??
@@ -254,6 +402,14 @@ class TaskItem {
       title: json['title']?.toString() ?? 'Untitled Task',
       courseOrCategory: json['courseOrCategory']?.toString() ?? '',
       type: TaskType.fromString(json['type']?.toString()),
+      customTypeId:
+          (rawCustomId == null || rawCustomId.isEmpty) ? null : rawCustomId,
+      customTypeLabel: (rawCustomLabel == null || rawCustomLabel.isEmpty)
+          ? null
+          : rawCustomLabel,
+      customTypeIconKey: (rawCustomIconKey == null || rawCustomIconKey.isEmpty)
+          ? null
+          : rawCustomIconKey,
       priority: TaskPriority.fromString(json['priority']?.toString()),
       dueDate: DateTime(parsedDue.year, parsedDue.month, parsedDue.day),
       dueHour: json['dueHour'] as int?,

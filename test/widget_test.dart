@@ -789,4 +789,143 @@ void main() {
     expect(find.text('Quick Task'), findsNothing);
     expect(find.byTooltip('Show quick presets'), findsOneWidget);
   });
+
+  testWidgets(
+      'All Scheduled opens directly anchored at Today with past tasks scrollable upward and Today jump button',
+      (WidgetTester tester) async {
+    GoogleFonts.config.allowRuntimeFetching = false;
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    SharedPreferences.setMockInitialValues({});
+    final storage = StorageService();
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    final seeded = <TaskItem>[
+      for (var d = 12; d >= 1; d--)
+        TaskItem(
+          id: 'past-$d',
+          notificationBaseId: 200 + d,
+          title: 'Past Task Day -$d',
+          dueDate: today.subtract(Duration(days: d)),
+          createdAt: today.subtract(Duration(days: d + 1)),
+        ),
+      TaskItem(
+        id: 'today-anchor',
+        notificationBaseId: 301,
+        title: 'Anchored Today Task',
+        dueDate: today,
+        createdAt: today,
+      ),
+      TaskItem(
+        id: 'future-anchor',
+        notificationBaseId: 302,
+        title: 'Anchored Tomorrow Task',
+        dueDate: today.add(const Duration(days: 1)),
+        createdAt: today,
+      ),
+    ];
+    await storage.saveTasks(seeded);
+
+    await tester.pumpWidget(
+      HTodoApp(
+        storage: storage,
+        notifications: NotificationService(),
+        cloudBackup: CloudBackupService.disabled(),
+        securityService: SecurityService.disabled(),
+        autoCheckUpdates: false,
+        skipSplash: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.bySemanticsLabel('Plan').first);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Full Timeline View'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('All Scheduled'), findsOneWidget);
+    expect(find.text('Anchored Today Task'), findsOneWidget);
+    expect(find.text('Anchored Tomorrow Task'), findsOneWidget);
+    // Oldest past date sits far above Today's anchor and is outside the initial viewport.
+    expect(find.text('Past Task Day -12'), findsNothing);
+
+    final timelineFinder = find.byWidgetPredicate(
+      (w) => w is CustomScrollView && w.center != null,
+    );
+    expect(timelineFinder, findsOneWidget);
+
+    await tester.drag(timelineFinder, const Offset(0, 450));
+    await tester.pumpAndSettle();
+    expect(find.text('Past Task Day -1'), findsOneWidget);
+
+    await tester.tap(find.text('Today'));
+    await tester.pumpAndSettle();
+    expect(find.text('Anchored Today Task'), findsOneWidget);
+  });
+
+  testWidgets(
+      'TaskEditorSheet shows expanded built-in types and creates a custom type with chosen icon',
+      (WidgetTester tester) async {
+    GoogleFonts.config.allowRuntimeFetching = false;
+    tester.view.physicalSize = const Size(390, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    SharedPreferences.setMockInitialValues({});
+    final storage = StorageService();
+
+    await tester.pumpWidget(
+      HTodoApp(
+        storage: storage,
+        notifications: NotificationService(),
+        cloudBackup: CloudBackupService.disabled(),
+        securityService: SecurityService.disabled(),
+        autoCheckUpdates: false,
+        skipSplash: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.bySemanticsLabel('Plan').first);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Add'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Mail'), findsOneWidget);
+    expect(find.text('Travel'), findsOneWidget);
+    expect(find.text('Bank'), findsOneWidget);
+    expect(find.text('Institution'), findsOneWidget);
+
+    await tester.tap(find.text('Custom'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('New Custom Task Type'), findsOneWidget);
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Type Name *'),
+      'Tuition',
+    );
+    await tester.tap(find.byTooltip('Study').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Create'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Tuition'), findsOneWidget);
+
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Task Title *'),
+      'Math Batch',
+    );
+    await tester.tap(find.text('Create Task'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Math Batch'), findsOneWidget);
+    expect(find.text('Tuition'), findsOneWidget);
+    expect(find.byIcon(Icons.menu_book_rounded), findsWidgets);
+  });
 }

@@ -9,6 +9,7 @@ import '../providers/task_provider.dart';
 import '../theme/app_tokens.dart';
 import 'glass_surface.dart';
 import 'task_editor_sheet.dart';
+import 'task_type_icons.dart';
 
 /// Frosted glass modal showing full task metadata, reminders, checklist, and notes.
 class TaskDetailSheet extends StatelessWidget {
@@ -131,8 +132,8 @@ class TaskDetailSheet extends StatelessWidget {
                         : dueDateLabel,
                   ),
                   _DetailChip(
-                    icon: Icons.label_outline_rounded,
-                    label: task.type.label,
+                    icon: taskIconForItem(task, taskProvider.customTaskTypes),
+                    label: taskLabelForItem(task, taskProvider.customTaskTypes),
                   ),
                   _DetailChip(
                     icon: Icons.flag_outlined,

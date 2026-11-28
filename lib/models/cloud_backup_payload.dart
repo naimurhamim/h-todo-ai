@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import 'ai_provider_config.dart';
 import 'chat_message.dart';
+import 'custom_task_type.dart';
 import 'reminder_settings.dart';
 import 'task_item.dart';
 
@@ -24,6 +25,7 @@ class CloudBackupPayload {
     required this.tasks,
     required this.chatMessages,
     this.deletedTaskIds = const [],
+    this.customTaskTypes = const [],
   });
 
   final int schemaVersion;
@@ -34,11 +36,13 @@ class CloudBackupPayload {
   final List<TaskItem> tasks;
   final List<ChatMessage> chatMessages;
   final List<String> deletedTaskIds;
+  final List<CustomTaskType> customTaskTypes;
 
   bool get isMeaningfullyEmpty =>
       tasks.isEmpty &&
       chatMessages.isEmpty &&
       deletedTaskIds.isEmpty &&
+      customTaskTypes.isEmpty &&
       providers.values.every((p) => !p.hasKey);
 
   Map<String, dynamic> toFirestoreMap() => {
@@ -53,6 +57,7 @@ class CloudBackupPayload {
         'tasks': tasks.map((t) => t.toJson()).toList(),
         'chatMessages': chatMessages.map((m) => m.toJson()).toList(),
         'deletedTaskIds': deletedTaskIds,
+        'customTaskTypes': customTaskTypes.map((c) => c.toJson()).toList(),
       };
 
   factory CloudBackupPayload.fromFirestoreMap(Map<String, dynamic> map) {
@@ -96,6 +101,12 @@ class CloudBackupPayload {
         .where((id) => id.isNotEmpty)
         .toList();
 
+    final rawCustomTypes = map['customTaskTypes'] as List<dynamic>? ?? const [];
+    final customTypes = rawCustomTypes
+        .whereType<Map>()
+        .map((m) => CustomTaskType.fromJson(Map<String, dynamic>.from(m)))
+        .toList();
+
     return CloudBackupPayload(
       schemaVersion: (map['schemaVersion'] as int?) ?? 1,
       updatedAt: DateTime.tryParse(map['updatedAt']?.toString() ?? '') ??
@@ -108,6 +119,7 @@ class CloudBackupPayload {
       tasks: tasks,
       chatMessages: messages,
       deletedTaskIds: deletedIds,
+      customTaskTypes: customTypes,
     );
   }
 
@@ -287,6 +299,39 @@ class CloudBackupPayload {
       if (reversedKeptDeleted.length >= maxDeletedTombstones) break;
     }
 
+    final mergedCustomTypesById = <String, CustomTaskType>{};
+    final nameToId = <String, String>{};
+    void upsertCustom(CustomTaskType item, {required bool preferIncoming}) {
+      final normName = item.name.trim().toLowerCase();
+      if (normName.isEmpty) return;
+      final existingById = mergedCustomTypesById[item.id];
+      final existingIdByName = nameToId[normName];
+      if (existingById != null) {
+        if (preferIncoming) mergedCustomTypesById[item.id] = item;
+        return;
+      }
+      if (existingIdByName != null) {
+        if (preferIncoming) {
+          mergedCustomTypesById[existingIdByName] = item;
+          if (item.id != existingIdByName) {
+            mergedCustomTypesById.remove(existingIdByName);
+            mergedCustomTypesById[item.id] = item;
+            nameToId[normName] = item.id;
+          }
+        }
+        return;
+      }
+      mergedCustomTypesById[item.id] = item;
+      nameToId[normName] = item.id;
+    }
+
+    for (final c in local.customTaskTypes) {
+      upsertCustom(c, preferIncoming: false);
+    }
+    for (final c in customTaskTypes) {
+      upsertCustom(c, preferIncoming: cloudIsNewer);
+    }
+
     return CloudBackupPayload(
       schemaVersion: schemaVersion,
       updatedAt: DateTime.now(),
@@ -296,6 +341,7 @@ class CloudBackupPayload {
       tasks: survivingTasks,
       chatMessages: mergedMessages,
       deletedTaskIds: reversedKeptDeleted.reversed.toList(),
+      customTaskTypes: mergedCustomTypesById.values.toList(),
     );
   }
 
@@ -320,6 +366,7 @@ class CloudBackupPayload {
       'tasks': tasks.map((t) => t.toJson()).toList(),
       'chatMessages': chatMessages.map((m) => m.toJson()).toList(),
       'deletedTaskIds': deletedTaskIds,
+      'customTaskTypes': customTaskTypes.map((c) => c.toJson()).toList(),
     };
   }
 
@@ -332,7 +379,8 @@ class CloudBackupPayload {
     final hasAnySection = map.containsKey('tasks') ||
         map.containsKey('providers') ||
         map.containsKey('chatMessages') ||
-        map.containsKey('reminderSettings');
+        map.containsKey('reminderSettings') ||
+        map.containsKey('customTaskTypes');
     if (!hasAnySection) {
       throw const FormatException(
         'Backup file does not contain valid H-TODO AI data.',
@@ -385,6 +433,8 @@ class CloudBackupPayload {
     final sortedChats = chatMessages.map((m) => m.toJson()).toList()
       ..sort((a, b) => (a['id']?.toString() ?? '').compareTo(b['id']?.toString() ?? ''));
     final sortedDeleted = List<String>.from(deletedTaskIds)..sort();
+    final sortedCustomTypes = customTaskTypes.map((c) => c.toJson()).toList()
+      ..sort((a, b) => (a['id']?.toString() ?? '').compareTo(b['id']?.toString() ?? ''));
 
     final canonical = {
       'schemaVersion': schemaVersion,
@@ -394,6 +444,7 @@ class CloudBackupPayload {
       'tasks': sortedTasks,
       'chatMessages': sortedChats,
       'deletedTaskIds': sortedDeleted,
+      'customTaskTypes': sortedCustomTypes,
     };
     return sha256.convert(utf8.encode(jsonEncode(canonical))).toString();
   }

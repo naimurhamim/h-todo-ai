@@ -3,24 +3,10 @@ import 'package:flutter/material.dart';
 import '../models/task_item.dart';
 import '../theme/app_tokens.dart';
 import 'glass_surface.dart';
+import 'task_type_icons.dart';
 
-/// Clean minimalist icon mapping for each academic/personal task category.
-IconData taskTypeIcon(TaskType type) {
-  switch (type) {
-    case TaskType.assignment:
-      return Icons.description_outlined;
-    case TaskType.classTest:
-      return Icons.edit_note_rounded;
-    case TaskType.exam:
-      return Icons.school_outlined;
-    case TaskType.lab:
-      return Icons.science_outlined;
-    case TaskType.meeting:
-      return Icons.groups_outlined;
-    case TaskType.task:
-      return Icons.bookmark_border_rounded;
-  }
-}
+export 'task_type_icons.dart'
+    show customTypeIconByKey, taskIconForItem, taskLabelForItem, taskTypeIcon;
 
 /// Frosted glass task card with strikethrough completion and expandable subtask drop-down.
 class TaskCard extends StatefulWidget {
@@ -102,7 +88,7 @@ class _TaskCardState extends State<TaskCard> {
                           ),
                         ),
                         child: Icon(
-                          done ? Icons.check_rounded : taskTypeIcon(task.type),
+                          done ? Icons.check_rounded : taskIconForItem(task),
                           size: AppIconSize.md,
                           color: done ? colors.onPrimary : colors.textPrimary,
                         ),
@@ -177,7 +163,7 @@ class _TaskCardState extends State<TaskCard> {
                       spacing: AppSpacing.sm,
                       runSpacing: AppSpacing.xs,
                       children: [
-                        _GlassTag(label: task.type.label),
+                        _GlassTag(label: taskLabelForItem(task)),
                         if (task.formattedDueTime != null)
                           _GlassTag(
                             icon: Icons.schedule_rounded,

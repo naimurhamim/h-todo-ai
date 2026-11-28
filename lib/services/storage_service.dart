@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/ai_provider_config.dart';
 import '../models/chat_message.dart';
+import '../models/custom_task_type.dart';
 import '../models/google_account_profile.dart';
 import '../models/reminder_settings.dart';
 import '../models/security_settings.dart';
@@ -23,6 +24,7 @@ class StorageService {
   static const _lastUpdatedAtKey = 'htodo_last_updated_at_v1';
   static const _deletedTaskIdsKey = 'htodo_deleted_task_ids_v1';
   static const _lastNotifiedUpdateKey = 'htodo_last_notified_update_v1';
+  static const _customTaskTypesKey = 'htodo_custom_task_types_v1';
   static const int _maxDeletedTombstones = 1000;
 
   SharedPreferences? _prefs;
@@ -245,5 +247,27 @@ class StorageService {
     } else {
       await prefs.setString(_lastNotifiedUpdateKey, version.trim());
     }
+  }
+
+  Future<List<CustomTaskType>> loadCustomTaskTypes() async {
+    final prefs = await _instance();
+    final raw = prefs.getString(_customTaskTypesKey);
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      final decoded = jsonDecode(raw) as List<dynamic>;
+      return decoded
+          .whereType<Map<String, dynamic>>()
+          .map(CustomTaskType.fromJson)
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> saveCustomTaskTypes(List<CustomTaskType> types) async {
+    final prefs = await _instance();
+    final encoded = jsonEncode(types.map((c) => c.toJson()).toList());
+    await prefs.setString(_customTaskTypesKey, encoded);
+    await prefs.setString(_lastUpdatedAtKey, DateTime.now().toIso8601String());
   }
 }

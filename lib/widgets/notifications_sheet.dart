@@ -327,7 +327,10 @@ class _NotificationsSheetState extends State<NotificationsSheet> {
                               ),
                             ),
                             child: Icon(
-                              taskTypeIcon(task.type),
+                              taskIconForItem(
+                                task,
+                                taskProvider.customTaskTypes,
+                              ),
                               size: AppIconSize.md,
                               color: colors.textPrimary,
                             ),

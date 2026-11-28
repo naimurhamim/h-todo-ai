@@ -142,7 +142,7 @@ class CloudSyncProvider extends ChangeNotifier {
           (await _storage.loadLastUpdatedAt()) ?? _lastLocalUpdatedAt;
     }
 
-    final live = await _service.restoreSilentSession();
+    final live = await _service.restoreSilentSession(cachedProfile: _profile);
     if (_disposed || _profile == null) return;
     if (live == null) {
       _errorMessage = 'Google session paused. Tap to reconnect.';
@@ -160,7 +160,7 @@ class CloudSyncProvider extends ChangeNotifier {
     if (_disposed) return;
     notifyListeners();
 
-    await _reconcileWithDrive(promptIfNecessary: false);
+    await _reconcileWithDrive(promptIfNecessary: false, quiet: true);
   }
 
   GoogleAccountProfile _mergeAccountInfo({
@@ -193,6 +193,7 @@ class CloudSyncProvider extends ChangeNotifier {
     final hasLocalData = _tasks.tasks.isNotEmpty ||
         _chat.messages.isNotEmpty ||
         _deletedTaskIds.isNotEmpty ||
+        _tasks.customTaskTypes.isNotEmpty ||
         _aiSettings.providers.values.any((p) => p.hasKey);
     final updatedAt =
         _lastLocalUpdatedAt.millisecondsSinceEpoch == 0 && hasLocalData
@@ -206,6 +207,7 @@ class CloudSyncProvider extends ChangeNotifier {
       tasks: _tasks.tasks,
       chatMessages: _chat.messages,
       deletedTaskIds: _deletedTaskIds,
+      customTaskTypes: _tasks.customTaskTypes,
     );
   }
 
@@ -220,6 +222,7 @@ class CloudSyncProvider extends ChangeNotifier {
       await _tasks.applyRestoredState(
         payload.tasks,
         payload.reminderSettings,
+        customTaskTypes: payload.customTaskTypes,
       );
       await _chat.applyRestoredState(payload.chatMessages);
       _deletedTaskIds = List<String>.from(payload.deletedTaskIds);
@@ -231,7 +234,10 @@ class CloudSyncProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> _reconcileWithDrive({required bool promptIfNecessary}) async {
+  Future<void> _reconcileWithDrive({
+    required bool promptIfNecessary,
+    bool quiet = false,
+  }) async {
     if (_profile == null || !_service.isAvailable) return;
     _isSyncing = true;
     _errorMessage = null;
@@ -342,12 +348,12 @@ class CloudSyncProvider extends ChangeNotifier {
           SyncBannerKind.loaded,
           'Loaded backup from Google Drive',
         );
-      } else if (uploadedToDrive) {
+      } else if (uploadedToDrive && !quiet) {
         _emitBanner(
           SyncBannerKind.saved,
           'Saved backup to Google Drive',
         );
-      } else {
+      } else if (!quiet) {
         _emitBanner(
           SyncBannerKind.synced,
           'Google Drive backup up to date',
@@ -416,13 +422,13 @@ class CloudSyncProvider extends ChangeNotifier {
   }
 
   /// Debounces and replaces the single `htodo_ai_backup.json` file in the user's
-  /// own Drive `appDataFolder` whenever local data changes.
+  /// own Drive `appDataFolder` quietly in the background whenever local data changes.
   void scheduleAutoBackup() {
     if (_suppressAutoSync) return;
     _lastLocalUpdatedAt = DateTime.now();
     if (!isAvailable || _profile == null) return;
     _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(milliseconds: 800), () {
+    _debounceTimer = Timer(const Duration(seconds: 4), () {
       unawaited(_runSingleUpload(silent: true, promptIfNecessary: false));
     });
   }
@@ -459,7 +465,7 @@ class CloudSyncProvider extends ChangeNotifier {
       do {
         _queuedUpload = false;
         if (!_service.isSignedInSessionActive) {
-          await _service.restoreSilentSession();
+          await _service.restoreSilentSession(cachedProfile: _profile);
           if (!_service.isSignedInSessionActive && promptIfNecessary) {
             final signed = await _service.signInWithGoogle();
             if (signed != null) {
@@ -488,7 +494,7 @@ class CloudSyncProvider extends ChangeNotifier {
         );
         await _storage.saveGoogleProfile(_profile);
       } while (_queuedUpload);
-      if (uploadedAny) {
+      if (uploadedAny && !silent) {
         _emitBanner(SyncBannerKind.saved, 'Saved to Google Drive');
       }
     } catch (e) {
@@ -524,7 +530,7 @@ class CloudSyncProvider extends ChangeNotifier {
 
     try {
       if (!_service.isSignedInSessionActive) {
-        await _service.restoreSilentSession();
+        await _service.restoreSilentSession(cachedProfile: _profile);
         if (!_service.isSignedInSessionActive) {
           final signed = await _service.signInWithGoogle();
           if (signed == null) return false;
@@ -613,6 +619,7 @@ class CloudSyncProvider extends ChangeNotifier {
         tasks: imported.tasks,
         chatMessages: imported.chatMessages,
         deletedTaskIds: imported.deletedTaskIds,
+        customTaskTypes: imported.customTaskTypes,
       );
     }
 

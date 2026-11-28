@@ -3,12 +3,14 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
+import '../models/custom_task_type.dart';
 import '../models/reminder_settings.dart';
 import '../models/task_item.dart';
 import '../providers/ai_settings_provider.dart';
 import '../providers/task_provider.dart';
 import '../theme/app_tokens.dart';
 import 'glass_surface.dart';
+import 'task_type_icons.dart';
 
 /// Frosted modal editor to create or update a task manually.
 class TaskEditorSheet extends StatefulWidget {
@@ -45,6 +47,9 @@ class _TaskEditorSheetState extends State<TaskEditorSheet> {
   late final TextEditingController _subtaskInputCtrl;
 
   late TaskType _type;
+  String? _customTypeId;
+  String? _customTypeLabel;
+  String? _customTypeIconKey;
   late TaskPriority _priority;
   late DateTime _dueDate;
   TimeOfDay? _dueTime;
@@ -59,6 +64,9 @@ class _TaskEditorSheetState extends State<TaskEditorSheet> {
     _notesCtrl = TextEditingController(text: e?.notes ?? '');
     _subtaskInputCtrl = TextEditingController();
     _type = e?.type ?? TaskType.task;
+    _customTypeId = e?.customTypeId;
+    _customTypeLabel = e?.customTypeLabel;
+    _customTypeIconKey = e?.customTypeIconKey;
     _priority = e?.priority ?? TaskPriority.medium;
     final base = widget.initialDate ?? DateTime.now();
     _dueDate = e?.dueDate ?? DateTime(base.year, base.month, base.day);
@@ -80,6 +88,7 @@ class _TaskEditorSheetState extends State<TaskEditorSheet> {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    final customTypes = context.watch<TaskProvider>().customTaskTypes;
     final reminder = context.watch<AiSettingsProvider>().reminderSettings;
     final dayBeforeStr = ReminderSettings.formatHourMinute(
       reminder.dayBeforeHour,
@@ -90,6 +99,24 @@ class _TaskEditorSheetState extends State<TaskEditorSheet> {
       reminder.endOfDayMinute,
     );
     final isEditing = widget.existing != null;
+
+    final entries = <_TypeChipEntry>[
+      for (final custom in customTypes)
+        _TypeChipEntry.custom(
+          custom: custom,
+          icon: customTypeIconByKey(custom.iconKey),
+          label: custom.name,
+        ),
+      for (final builtIn in TaskType.values)
+        _TypeChipEntry.builtIn(
+          taskType: builtIn,
+          icon: taskTypeIcon(builtIn),
+          label: builtIn.label,
+        ),
+    ];
+    final split = (entries.length + 1) ~/ 2;
+    final row1 = entries.sublist(0, split);
+    final row2 = entries.sublist(split);
 
     return Padding(
       padding: EdgeInsets.only(
@@ -133,7 +160,7 @@ class _TaskEditorSheetState extends State<TaskEditorSheet> {
                   controller: _titleCtrl,
                   decoration: const InputDecoration(
                     labelText: 'Task Title *',
-                    hintText: 'e.g. Assignment 03 or Class Test',
+                    hintText: 'e.g. Send Mail, Bank Visit or Class Test',
                   ),
                   validator: (v) => (v == null || v.trim().isEmpty)
                       ? 'Title is required'
@@ -144,22 +171,53 @@ class _TaskEditorSheetState extends State<TaskEditorSheet> {
                   controller: _courseCtrl,
                   decoration: const InputDecoration(
                     labelText: 'Course / Category',
-                    hintText: 'e.g. IRE 415 – Computer Vision',
+                    hintText: 'e.g. IRE 415, Personal or Office',
                   ),
                 ),
-                const SizedBox(height: AppSpacing.lg),
-                Text('Type', style: textTheme.labelLarge),
-                const SizedBox(height: AppSpacing.sm),
-                Wrap(
-                  spacing: AppSpacing.sm,
-                  runSpacing: AppSpacing.xs,
-                  children: TaskType.values.map((t) {
-                    return ChoiceChip(
-                      label: Text(t.label),
-                      selected: _type == t,
-                      onSelected: (_) => setState(() => _type = t),
-                    );
-                  }).toList(),
+                const SizedBox(height: AppSpacing.md),
+                Row(
+                  children: [
+                    Text('Type', style: textTheme.labelLarge),
+                    const Spacer(),
+                    TextButton.icon(
+                      onPressed: _openCreateCustomTypeDialog,
+                      style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                      ),
+                      icon: const Icon(Icons.add_rounded, size: 17),
+                      label: const Text('Custom'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.xs),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          for (var i = 0; i < row1.length; i++) ...[
+                            if (i > 0) const SizedBox(width: AppSpacing.sm),
+                            _buildTypeChip(row1[i]),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: AppSpacing.xs),
+                      Row(
+                        children: [
+                          for (var i = 0; i < row2.length; i++) ...[
+                            if (i > 0) const SizedBox(width: AppSpacing.sm),
+                            _buildTypeChip(row2[i]),
+                          ],
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
                 const SizedBox(height: AppSpacing.lg),
                 Text('Priority', style: textTheme.labelLarge),
@@ -273,6 +331,71 @@ class _TaskEditorSheetState extends State<TaskEditorSheet> {
     );
   }
 
+  Widget _buildTypeChip(_TypeChipEntry entry) {
+    final custom = entry.custom;
+    if (custom != null) {
+      return InputChip(
+        avatar: Icon(entry.icon, size: 16),
+        label: Text(entry.label),
+        selected: _customTypeId == custom.id,
+        showCheckmark: false,
+        onSelected: (_) => setState(() {
+          _customTypeId = custom.id;
+          _customTypeLabel = custom.name;
+          _customTypeIconKey = custom.iconKey;
+          _type = TaskType.task;
+        }),
+        deleteIcon: const Icon(Icons.close_rounded, size: 15),
+        deleteButtonTooltipMessage: 'Remove ${custom.name}',
+        onDeleted: () async {
+          final provider = context.read<TaskProvider>();
+          if (_customTypeId == custom.id) {
+            setState(() {
+              _customTypeId = null;
+              _customTypeLabel = null;
+              _customTypeIconKey = null;
+              _type = TaskType.task;
+            });
+          }
+          await provider.deleteCustomTaskType(custom.id);
+        },
+      );
+    }
+
+    final t = entry.taskType!;
+    return ChoiceChip(
+      avatar: Icon(entry.icon, size: 16),
+      label: Text(entry.label),
+      selected: _customTypeId == null && _type == t,
+      showCheckmark: false,
+      onSelected: (_) => setState(() {
+        _customTypeId = null;
+        _customTypeLabel = null;
+        _customTypeIconKey = null;
+        _type = t;
+      }),
+    );
+  }
+
+  Future<void> _openCreateCustomTypeDialog() async {
+    final result = await showDialog<({String name, String iconKey})>(
+      context: context,
+      builder: (_) => const _CustomTaskTypeDialog(),
+    );
+    if (result == null || !mounted) return;
+    final created = await context.read<TaskProvider>().addCustomTaskType(
+          name: result.name,
+          iconKey: result.iconKey,
+        );
+    if (created == null || !mounted) return;
+    setState(() {
+      _customTypeId = created.id;
+      _customTypeLabel = created.name;
+      _customTypeIconKey = created.iconKey;
+      _type = TaskType.task;
+    });
+  }
+
   Future<void> _pickDate() async {
     final picked = await showDatePicker(
       context: context,
@@ -319,6 +442,9 @@ class _TaskEditorSheetState extends State<TaskEditorSheet> {
       title: _titleCtrl.text.trim(),
       courseOrCategory: _courseCtrl.text.trim(),
       type: _type,
+      customTypeId: _customTypeId,
+      customTypeLabel: _customTypeLabel,
+      customTypeIconKey: _customTypeIconKey,
       priority: _priority,
       dueDate: _dueDate,
       dueHour: _dueTime?.hour,
@@ -328,6 +454,7 @@ class _TaskEditorSheetState extends State<TaskEditorSheet> {
       isCompleted: existing?.isCompleted ?? false,
       completedAt: existing?.completedAt,
       createdAt: existing?.createdAt ?? DateTime.now(),
+      seriesId: existing?.seriesId,
     );
 
     if (existing != null) {
@@ -337,5 +464,146 @@ class _TaskEditorSheetState extends State<TaskEditorSheet> {
     }
 
     if (mounted) Navigator.of(context).pop();
+  }
+}
+
+class _TypeChipEntry {
+  const _TypeChipEntry.custom({
+    required this.custom,
+    required this.icon,
+    required this.label,
+  }) : taskType = null;
+
+  const _TypeChipEntry.builtIn({
+    required this.taskType,
+    required this.icon,
+    required this.label,
+  }) : custom = null;
+
+  final CustomTaskType? custom;
+  final TaskType? taskType;
+  final IconData icon;
+  final String label;
+}
+
+class _CustomTaskTypeDialog extends StatefulWidget {
+  const _CustomTaskTypeDialog();
+
+  @override
+  State<_CustomTaskTypeDialog> createState() => _CustomTaskTypeDialogState();
+}
+
+class _CustomTaskTypeDialogState extends State<_CustomTaskTypeDialog> {
+  final _nameCtrl = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+  String _selectedIconKey = kCustomTypeIconOptions.first.key;
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.appColors;
+    final textTheme = Theme.of(context).textTheme;
+
+    return AlertDialog(
+      title: const Text('New Custom Task Type'),
+      content: Form(
+        key: _formKey,
+        child: SizedBox(
+          width: 320,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextFormField(
+                controller: _nameCtrl,
+                autofocus: true,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(
+                  labelText: 'Type Name *',
+                  hintText: 'e.g. Tuition, Visa, Client',
+                ),
+                validator: (v) => (v == null || v.trim().isEmpty)
+                    ? 'Enter a type name'
+                    : null,
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Text('Choose Icon', style: textTheme.labelLarge),
+              const SizedBox(height: AppSpacing.sm),
+              SizedBox(
+                height: 210,
+                child: GridView.builder(
+                  itemCount: kCustomTypeIconOptions.length,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 5,
+                    mainAxisSpacing: 8,
+                    crossAxisSpacing: 8,
+                  ),
+                  itemBuilder: (context, index) {
+                    final opt = kCustomTypeIconOptions[index];
+                    final selected = _selectedIconKey == opt.key;
+                    return Tooltip(
+                      message: opt.label,
+                      child: Semantics(
+                        label: '${opt.label} icon',
+                        selected: selected,
+                        button: true,
+                        child: InkWell(
+                          onTap: () =>
+                              setState(() => _selectedIconKey = opt.key),
+                          borderRadius: BorderRadius.circular(AppRadius.sm),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 140),
+                            decoration: BoxDecoration(
+                              color: selected
+                                  ? colors.primarySoft
+                                  : colors.surfaceSubtle,
+                              borderRadius: BorderRadius.circular(AppRadius.sm),
+                              border: Border.all(
+                                color: selected
+                                    ? colors.primary
+                                    : colors.glassBorder,
+                                width: selected ? 1.5 : 1,
+                              ),
+                            ),
+                            child: Icon(
+                              opt.icon,
+                              size: 22,
+                              color: selected
+                                  ? colors.primary
+                                  : colors.textPrimary,
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () {
+            if (!(_formKey.currentState?.validate() ?? false)) return;
+            Navigator.of(context).pop((
+              name: _nameCtrl.text.trim(),
+              iconKey: _selectedIconKey,
+            ));
+          },
+          child: const Text('Create'),
+        ),
+      ],
+    );
   }
 }

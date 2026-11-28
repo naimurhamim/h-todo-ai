@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:h_todo_ai/models/ai_provider_config.dart';
 import 'package:h_todo_ai/models/chat_message.dart';
 import 'package:h_todo_ai/models/cloud_backup_payload.dart';
+import 'package:h_todo_ai/models/custom_task_type.dart';
 import 'package:h_todo_ai/models/google_account_profile.dart';
 import 'package:h_todo_ai/models/reminder_settings.dart';
 import 'package:h_todo_ai/models/task_item.dart';
@@ -44,7 +45,9 @@ class _FakeSyncBackupService extends CloudBackupService {
   bool get isSignedInSessionActive => silentAccount != null && silentRestoreCalls > 0;
 
   @override
-  Future<GoogleAccountProfile?> restoreSilentSession() async {
+  Future<GoogleAccountProfile?> restoreSilentSession({
+    GoogleAccountProfile? cachedProfile,
+  }) async {
     silentRestoreCalls++;
     return silentAccount;
   }
@@ -623,10 +626,8 @@ void main() {
       syncRet.dismissStatusBanner();
       expect(syncRet.statusBanner, isNull);
 
-      // Explicit save emits saved banner.
-      final savedOk = await syncRet.backupNow(silent: true);
-      expect(savedOk, isTrue);
-      // Since local matches lastSyncedFingerprint, force upload by adding a task.
+      // Silent background backup succeeds quietly without interrupting UI banners,
+      // while explicit manual backup surfaces the Saved confirmation banner.
       await tasksRet.addTask(
         TaskItem(
           id: 't-local-new',
@@ -637,8 +638,54 @@ void main() {
         ),
       );
       await syncRet.backupNow(silent: true);
+      expect(syncRet.statusBanner, isNull);
+      await tasksRet.addTask(
+        TaskItem(
+          id: 't-local-manual',
+          notificationBaseId: 402,
+          title: 'Manual Upload Item',
+          dueDate: DateTime(2026, 11, 29),
+          createdAt: DateTime(2026, 11, 27),
+        ),
+      );
+      await syncRet.backupNow(silent: false);
       expect(syncRet.statusBanner?.kind, SyncBannerKind.saved);
       syncRet.dispose();
+
+      // 2b. Returning user whose local state already matches Drive stays completely silent on launch.
+      final matchingSample = buildSamplePayload();
+      SharedPreferences.setMockInitialValues({
+        'htodo_google_profile_v1': jsonEncode(savedProfile.toJson()),
+        'htodo_tasks_v1': jsonEncode(matchingSample.tasks.map((t) => t.toJson()).toList()),
+        'htodo_chat_v1': jsonEncode(matchingSample.chatMessages.map((m) => m.toJson()).toList()),
+        'htodo_providers_v1': jsonEncode({
+          for (final entry in matchingSample.providers.entries)
+            entry.key.name: entry.value.toJson(),
+        }),
+        'htodo_active_provider_v1': matchingSample.activeProviderType.name,
+      });
+      final storageSynced = StorageService();
+      final aiSynced = AiSettingsProvider(storage: storageSynced);
+      final tasksSynced = TaskProvider(
+        storage: storageSynced,
+        notifications: NotificationService(),
+      );
+      final chatSynced = ChatProvider(storage: storageSynced);
+      await Future.wait([aiSynced.load(), tasksSynced.load(), chatSynced.load()]);
+      final fakeSynced = _FakeSyncBackupService(
+        silentAccount: savedProfile,
+        remotePayload: matchingSample,
+      );
+      final syncMatched = CloudSyncProvider(
+        service: fakeSynced,
+        storage: storageSynced,
+        aiSettings: aiSynced,
+        tasks: tasksSynced,
+        chat: chatSynced,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      expect(syncMatched.statusBanner, isNull);
+      syncMatched.dispose();
 
       // 3. Returning user with expired silent session -> emits error banner with retry.
       SharedPreferences.setMockInitialValues({
@@ -704,6 +751,64 @@ void main() {
       expect(syncPaused.statusBanner?.kind, SyncBannerKind.error);
       expect(syncPaused.statusBanner?.canRetry, isTrue);
       syncPaused.dispose();
+    });
+
+    test('serializes, fingerprints, and merges CustomTaskType + TaskItem custom type fields', () {
+      const tuition = CustomTaskType(
+        id: 'ct-1',
+        name: 'Tuition',
+        iconKey: 'study',
+      );
+      const visa = CustomTaskType(
+        id: 'ct-2',
+        name: 'Visa Work',
+        iconKey: 'document',
+      );
+
+      final local = CloudBackupPayload(
+        updatedAt: DateTime(2026, 11, 28, 9, 0),
+        activeProviderType: AiProviderType.groq,
+        providers: AiProviderConfig.defaults(),
+        reminderSettings: const ReminderSettings(),
+        tasks: [
+          TaskItem(
+            id: 'task-ct-1',
+            notificationBaseId: 77,
+            title: 'Teach Physics',
+            type: TaskType.task,
+            customTypeId: tuition.id,
+            customTypeLabel: tuition.name,
+            customTypeIconKey: tuition.iconKey,
+            dueDate: DateTime(2026, 11, 28),
+            createdAt: DateTime(2026, 11, 28),
+          ),
+        ],
+        chatMessages: const [],
+        customTaskTypes: const [tuition],
+      );
+
+      final roundTrip = CloudBackupPayload.fromJsonString(local.toJsonString());
+      expect(roundTrip.customTaskTypes, hasLength(1));
+      expect(roundTrip.customTaskTypes.single.name, 'Tuition');
+      expect(roundTrip.customTaskTypes.single.iconKey, 'study');
+      expect(roundTrip.tasks.single.displayTypeLabel, 'Tuition');
+
+      final cloud = CloudBackupPayload(
+        updatedAt: DateTime(2026, 11, 28, 10, 0),
+        activeProviderType: AiProviderType.groq,
+        providers: AiProviderConfig.defaults(),
+        reminderSettings: const ReminderSettings(),
+        tasks: const [],
+        chatMessages: const [],
+        customTaskTypes: const [visa],
+      );
+      expect(
+        local.computeContentFingerprint(),
+        isNot(cloud.computeContentFingerprint()),
+      );
+
+      final merged = cloud.mergeWithLocal(local);
+      expect(merged.customTaskTypes.map((c) => c.name).toSet(), {'Tuition', 'Visa Work'});
     });
   });
 }
